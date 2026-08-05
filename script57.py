@@ -16,34 +16,25 @@ st.set_page_config(
     page_title="棒球打擊分析 PWA",
     page_icon="⚾",
     layout="wide",
-    initial_sidebar_state="collapsed",  # 手機預設收合側邊欄，增加可視面積
+    initial_sidebar_state="collapsed",
 )
 
 # 注入 PWA Web App Meta 標籤與行動端優化 CSS
 pwa_html = """
-    <!-- PWA Web App 設定 -->
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <meta name="theme-color" content="#0E1117">
-    <link rel="manifest" href="data:application/json;base64,ewogICJzaG9ydF9uYW1lIjogIuajkmnDicaAIiwKICAibmFtZSI6ICLmo5Jp
-    eLp24o2A44S056CU5L2P44SuIiwKICAiaWNvbnMiOiBbCiAgICB7CiAgICAgICJzcmMiOiAiaHR0cHM6Ly9lbW9qaWNkbi5lbW9qaS51cy9zbm
-    Fwc2hvdC92MTEvYmFzZWJhbGxfMWY2Y2UucG5nIiwKICAgICAgInR5cGUiOiAiaW1hZ2UvcG5nIiwKICAgICAgInNpemVzIjogIjE5MngxOTIi
-    CiAgICB9CiAgXSwKICAic3RhcnRfdXJsIjogIi4iLAogICJkaXNwbGF5IjogInN0YW5kYWxvbmUiLAogICJiYWNrZ3JvdW5kX2NvbG9yIjog
-    IiMwRTExMTciLAogICJ0aGVtZV9jb2xvciI6ICIjMEUxMTE3Igp9">
 """
 st.markdown(pwa_html, unsafe_allow_html=True)
 
-# 手機/平板動態樣式微調
 st.markdown(
     """
     <style>
-        /* 隱藏預設的主選單與頁尾以達全螢幕 APP 效果 */
         #MainMenu {visibility: hidden;}
         footer {visibility: hidden;}
         header {visibility: hidden;}
 
-        /* 調整行動端容器間距 */
         .block-container {
             padding-top: 1.5rem !important;
             padding-bottom: 2rem !important;
@@ -51,7 +42,6 @@ st.markdown(
             padding-right: 1rem !important;
         }
 
-        /* 提升觸控按鈕體驗 */
         .stButton>button {
             width: 100%;
             height: 3rem;
@@ -59,7 +49,6 @@ st.markdown(
             border-radius: 10px;
         }
 
-        /* 揮棒數據卡片樣式 */
         .metric-card {
             background-color: #1E222A;
             border-radius: 10px;
@@ -121,17 +110,17 @@ def process_frame(image, landmarks_list, width, height):
         wrist_pt = get_pt(16)  # 右手腕
 
         torso_center = (
-            left_shoulder + right_shoulder + left_hip + right_hip
-        ) / 4.0
+                               left_shoulder + right_shoulder + left_hip + right_hip
+                       ) / 4.0
         left_leg_center = (left_hip + left_knee + left_ankle) / 3.0
         right_leg_center = (right_hip + right_knee + right_ankle) / 3.0
         arms_center = (left_shoulder + right_shoulder) / 2.0
 
         com = (
-            torso_center * 0.50
-            + left_leg_center * 0.15
-            + right_leg_center * 0.15
-            + arms_center * 0.20
+                torso_center * 0.50
+                + left_leg_center * 0.15
+                + right_leg_center * 0.15
+                + arms_center * 0.20
         )
         cx, cy = int(com[0]), int(com[1])
         cv2.circle(image, (cx, cy), 8, (0, 0, 255), -1)
@@ -147,12 +136,16 @@ def process_frame(image, landmarks_list, width, height):
 
 
 def save_swing_clip(frames, fps, width, height, output_path):
-    """匯出單次揮棒短片 (.mp4)"""
-    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    """匯出單次揮棒短片 (改用 VP80/WebM 或 avc1 提高網頁相容性)"""
+    fourcc = cv2.VideoWriter_fourcc(*"VP80")
+    if not output_path.endswith(".webm"):
+        output_path = output_path.replace(".mp4", ".webm")
+
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
     for f in frames:
         out.write(f)
     out.release()
+    return output_path
 
 
 # ==============================================================================
@@ -182,20 +175,19 @@ st.sidebar.markdown("---")
 st.sidebar.subheader("🛡️ 防多算軌跡門檻")
 min_peak_speed = st.sidebar.slider(
     "最低揮棒峰值速度 (km/h)",
-    min_value=20.0,
+    min_value=10.0,
     max_value=80.0,
-    value=35.0,
+    value=20.0,  # 調低門檻以利偵測
     step=5.0,
 )
 min_x_travel = st.sidebar.slider(
     "手腕最小水平位移 (Pixels)",
-    min_value=50.0,
+    min_value=30.0,
     max_value=400.0,
-    value=150.0,
+    value=80.0,  # 調低位移門檻以利偵測
     step=10.0,
 )
 
-# 行動端 Friendly 檔案上傳
 uploaded_file = st.file_uploader(
     "📁 選擇或拍攝打擊影片", type=["mp4", "avi", "mov", "m4v"]
 )
@@ -210,7 +202,6 @@ if uploaded_file is not None:
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    # 針對行動裝置切換單/雙欄版面
     st.markdown("### 📹 打擊分析動態")
     st_frame = st.empty()
 
@@ -220,12 +211,10 @@ if uploaded_file is not None:
     table_placeholder = st.empty()
     replay_placeholder = st.empty()
 
-    # 數據變數
     history_wrist = []
     history_speeds = []
     swing_events = []
 
-    # 狀態機變數
     swing_state = 0
     swing_frames_data = []
     swing_raw_frames = []
@@ -271,25 +260,26 @@ if uploaded_file is not None:
                     current_wrist = wrist
                     history_wrist.append((frame_idx, wrist[0], wrist[1]))
 
-            # 即時速度計算
+            # 計算即時速度
             current_speed = 0.0
             if len(history_wrist) >= 2:
                 p1 = history_wrist[-2]
                 p2 = history_wrist[-1]
                 dx = (p2[1] - p1[1]) * meters_per_pixel
                 dy = (p2[2] - p1[2]) * meters_per_pixel
-                dist_m = math.sqrt(dx**2 + dy**2)
+                dist_m = math.sqrt(dx ** 2 + dy ** 2)
                 current_speed = (dist_m / dt) * 3.6 * bat_speed_factor
 
             history_speeds.append((frame_idx, current_speed))
 
-            # 揮棒狀態機
+            # 狀態機判斷
             if cooldown_counter > 0:
                 cooldown_counter -= 1
 
-            start_trigger_speed = min_peak_speed * 0.45
+            start_trigger_speed = min_peak_speed * 0.4
 
             if cooldown_counter == 0:
+                # 狀態 0: 準備/等待觸發
                 if swing_state == 0:
                     if current_speed >= start_trigger_speed:
                         swing_state = 1
@@ -298,6 +288,7 @@ if uploaded_file is not None:
                         max_speed_in_swing = current_speed
                         peak_frame_in_swing = frame_idx
 
+                # 狀態 1: 揮棒進行中（加速與峰值）
                 elif swing_state == 1:
                     swing_frames_data.append(
                         {
@@ -312,17 +303,20 @@ if uploaded_file is not None:
                         max_speed_in_swing = current_speed
                         peak_frame_in_swing = frame_idx
 
+                    # 減速達到峰值的 60% 時，轉入狀態 2
                     if (
-                        max_speed_in_swing >= min_peak_speed
-                        and current_speed < max_speed_in_swing * 0.6
+                            max_speed_in_swing >= min_peak_speed
+                            and current_speed < max_speed_in_swing * 0.6
                     ):
                         swing_state = 2
                     elif (
-                        current_speed < start_trigger_speed
-                        and max_speed_in_swing < min_peak_speed
+                            current_speed < start_trigger_speed
+                            and max_speed_in_swing < min_peak_speed
+                            and len(swing_frames_data) > 15
                     ):
                         swing_state = 0
 
+                # 狀態 2: 收棒與位移確認
                 elif swing_state == 2:
                     swing_frames_data.append(
                         {
@@ -333,7 +327,11 @@ if uploaded_file is not None:
                     )
                     swing_raw_frames.append(annotated_frame)
 
-                    if current_speed <= start_trigger_speed * 0.8:
+                    # 當速度降回觸發值以下，或是蒐集超過 30 幀，強制進入結算 (State 3)
+                    if (
+                            current_speed <= start_trigger_speed * 0.8
+                            or len(swing_frames_data) > 40
+                    ):
                         x_coords = [
                             item["wrist"][0]
                             for item in swing_frames_data
@@ -349,6 +347,7 @@ if uploaded_file is not None:
                             swing_state = 0
                             cooldown_counter = int(fps * 0.3)
 
+                # 狀態 3: 揮棒完成，儲存影片與結算數據
                 if swing_state == 3:
                     launch_angle = 0.0
                     peak_sub_idx = [
@@ -362,25 +361,18 @@ if uploaded_file is not None:
                         p_c = swing_frames_data[p_idx]["wrist"]
                         p_post = swing_frames_data[post_idx]["wrist"]
                         if p_c and p_post:
-                            dx_launch = (
-                                p_post[0] - p_c[0]
-                            ) * meters_per_pixel
-                            dy_launch = (
-                                p_post[1] - p_c[1]
-                            ) * meters_per_pixel
-                            if (
-                                abs(dx_launch) > 0.0001
-                                or abs(dy_launch) > 0.0001
-                            ):
+                            dx_launch = (p_post[0] - p_c[0]) * meters_per_pixel
+                            dy_launch = (p_post[1] - p_c[1]) * meters_per_pixel
+                            if abs(dx_launch) > 0.0001 or abs(dy_launch) > 0.0001:
                                 launch_angle = math.degrees(
                                     math.atan2(-dy_launch, dx_launch)
                                 )
 
                     swing_num = len(swing_events) + 1
-                    clip_filename = os.path.join(
-                        clip_dir, f"swing_{swing_num}.mp4"
-                    )
-                    save_swing_clip(
+                    clip_filename = os.path.join(clip_dir, f"swing_{swing_num}.webm")
+
+                    # 儲存短片 (webm 格式相容網頁)
+                    actual_clip_path = save_swing_clip(
                         swing_raw_frames, fps, width, height, clip_filename
                     )
 
@@ -389,11 +381,11 @@ if uploaded_file is not None:
                         "初速 (km/h)": round(max_speed_in_swing, 1),
                         "仰角 (度)": round(launch_angle, 1),
                         "耗時 (秒)": round(len(swing_frames_data) / fps, 2),
-                        "clip_path": clip_filename,
+                        "clip_path": actual_clip_path,
                     }
                     swing_events.append(event_data)
 
-                    # UI 更新
+                    # 即時更新 UI
                     with metrics_placeholder.container():
                         st.success(f"🎉 成功偵測第 {swing_num} 次完整揮棒！")
                         m1, m2 = st.columns(2)
@@ -411,28 +403,28 @@ if uploaded_file is not None:
 
                     with replay_placeholder.container():
                         st.subheader(f"🎬 第 {swing_num} 次揮棒動作回放")
-                        if os.path.exists(clip_filename):
-                            st.video(clip_filename)
+                        if os.path.exists(actual_clip_path):
+                            st.video(actual_clip_path)
 
                     swing_state = 0
-                    cooldown_counter = int(fps * 1.0)
+                    cooldown_counter = int(fps * 0.8)
 
-            # 畫面繪製與更新
+            # 1. 繪製狀態文字
             cv2.putText(
                 annotated_frame,
-                f"STATE: {swing_state}",
+                f"STATE: {swing_state} | SPEED: {current_speed:.1f} km/h",
                 (30, 50),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.9,
+                0.8,
                 (0, 255, 255),
                 2,
             )
 
-            # 轉換為 RGB 格式並確保型態為 uint8
+            # 2. 轉換格式與確保正確數據型態
             frame_display = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-            frame_display = np.asarray(frame_display, dtype=np.uint8)
+            frame_display = np.ascontiguousarray(frame_display, dtype=np.uint8)
 
-            # 修正 use_column_width 改用 use_container_width
+            # 3. 刷新主畫面 (確保即時動作呈現)
             st_frame.image(
                 frame_display,
                 channels="RGB",
