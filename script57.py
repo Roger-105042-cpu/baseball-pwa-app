@@ -121,17 +121,17 @@ def process_frame(image, landmarks_list, width, height):
         wrist_pt = get_pt(16)  # 右手腕
 
         torso_center = (
-                               left_shoulder + right_shoulder + left_hip + right_hip
-                       ) / 4.0
+            left_shoulder + right_shoulder + left_hip + right_hip
+        ) / 4.0
         left_leg_center = (left_hip + left_knee + left_ankle) / 3.0
         right_leg_center = (right_hip + right_knee + right_ankle) / 3.0
         arms_center = (left_shoulder + right_shoulder) / 2.0
 
         com = (
-                torso_center * 0.50
-                + left_leg_center * 0.15
-                + right_leg_center * 0.15
-                + arms_center * 0.20
+            torso_center * 0.50
+            + left_leg_center * 0.15
+            + right_leg_center * 0.15
+            + arms_center * 0.20
         )
         cx, cy = int(com[0]), int(com[1])
         cv2.circle(image, (cx, cy), 8, (0, 0, 255), -1)
@@ -278,7 +278,7 @@ if uploaded_file is not None:
                 p2 = history_wrist[-1]
                 dx = (p2[1] - p1[1]) * meters_per_pixel
                 dy = (p2[2] - p1[2]) * meters_per_pixel
-                dist_m = math.sqrt(dx ** 2 + dy ** 2)
+                dist_m = math.sqrt(dx**2 + dy**2)
                 current_speed = (dist_m / dt) * 3.6 * bat_speed_factor
 
             history_speeds.append((frame_idx, current_speed))
@@ -313,13 +313,13 @@ if uploaded_file is not None:
                         peak_frame_in_swing = frame_idx
 
                     if (
-                            max_speed_in_swing >= min_peak_speed
-                            and current_speed < max_speed_in_swing * 0.6
+                        max_speed_in_swing >= min_peak_speed
+                        and current_speed < max_speed_in_swing * 0.6
                     ):
                         swing_state = 2
                     elif (
-                            current_speed < start_trigger_speed
-                            and max_speed_in_swing < min_peak_speed
+                        current_speed < start_trigger_speed
+                        and max_speed_in_swing < min_peak_speed
                     ):
                         swing_state = 0
 
@@ -363,14 +363,14 @@ if uploaded_file is not None:
                         p_post = swing_frames_data[post_idx]["wrist"]
                         if p_c and p_post:
                             dx_launch = (
-                                                p_post[0] - p_c[0]
-                                        ) * meters_per_pixel
+                                p_post[0] - p_c[0]
+                            ) * meters_per_pixel
                             dy_launch = (
-                                                p_post[1] - p_c[1]
-                                        ) * meters_per_pixel
+                                p_post[1] - p_c[1]
+                            ) * meters_per_pixel
                             if (
-                                    abs(dx_launch) > 0.0001
-                                    or abs(dy_launch) > 0.0001
+                                abs(dx_launch) > 0.0001
+                                or abs(dy_launch) > 0.0001
                             ):
                                 launch_angle = math.degrees(
                                     math.atan2(-dy_launch, dx_launch)
@@ -427,10 +427,16 @@ if uploaded_file is not None:
                 (0, 255, 255),
                 2,
             )
+
+            # 轉換為 RGB 格式並確保型態為 uint8
+            frame_display = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+            frame_display = np.asarray(frame_display, dtype=np.uint8)
+
+            # 修正 use_column_width 改用 use_container_width
             st_frame.image(
-                cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB),
+                frame_display,
                 channels="RGB",
-                use_column_width=True,
+                use_container_width=True,
             )
 
     cap.release()
