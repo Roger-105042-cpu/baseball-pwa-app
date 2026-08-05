@@ -2,5 +2,4 @@ streamlit
 mediapipe
 opencv-python-headless
 numpy
-pandas
-matplotlib
+pillow
