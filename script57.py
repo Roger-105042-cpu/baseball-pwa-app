@@ -19,7 +19,6 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-# 注入 PWA Web App Meta 標籤與行動端優化 CSS
 pwa_html = """
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
@@ -47,14 +46,6 @@ st.markdown(
             height: 3rem;
             font-size: 1.1rem;
             border-radius: 10px;
-        }
-
-        .metric-card {
-            background-color: #1E222A;
-            border-radius: 10px;
-            padding: 12px;
-            text-align: center;
-            border: 1px solid #31363F;
         }
     </style>
 """,
@@ -136,7 +127,7 @@ def process_frame(image, landmarks_list, width, height):
 
 
 def save_swing_clip(frames, fps, width, height, output_path):
-    """匯出單次揮棒短片 (改用 VP80/WebM 或 avc1 提高網頁相容性)"""
+    """匯出單次揮棒短片 (.webm)"""
     fourcc = cv2.VideoWriter_fourcc(*"VP80")
     if not output_path.endswith(".webm"):
         output_path = output_path.replace(".mp4", ".webm")
@@ -177,14 +168,14 @@ min_peak_speed = st.sidebar.slider(
     "最低揮棒峰值速度 (km/h)",
     min_value=10.0,
     max_value=80.0,
-    value=20.0,  # 調低門檻以利偵測
+    value=20.0,
     step=5.0,
 )
 min_x_travel = st.sidebar.slider(
     "手腕最小水平位移 (Pixels)",
     min_value=30.0,
     max_value=400.0,
-    value=80.0,  # 調低位移門檻以利偵測
+    value=80.0,
     step=10.0,
 )
 
@@ -202,19 +193,20 @@ if uploaded_file is not None:
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    st.markdown("### 📹 打擊分析動態")
+    # 使用 Layout 區隔主畫面與下方回放區
+    st.markdown("### 📹 全程動態分析預覽")
     st_frame = st.empty()
 
     st.markdown("---")
-    st.markdown("### ⚡ 揮棒數據與短片回放")
+    st.markdown("### ⚡ 揮棒分段分析與自由回放")
+
     metrics_placeholder = st.empty()
-    table_placeholder = st.empty()
-    replay_placeholder = st.empty()
+
+    # Session State 儲存切出的揮棒紀錄
+    if "swing_events" not in st.session_state or st.sidebar.button("🔄 重新分析影片"):
+        st.session_state.swing_events = []
 
     history_wrist = []
-    history_speeds = []
-    swing_events = []
-
     swing_state = 0
     swing_frames_data = []
     swing_raw_frames = []
@@ -233,6 +225,7 @@ if uploaded_file is not None:
 
     clip_dir = tempfile.mkdtemp()
 
+    # 執行影片串流處理
     with vision.PoseLandmarker.create_from_options(options) as landmarker:
         frame_idx = 0
 
@@ -270,16 +263,13 @@ if uploaded_file is not None:
                 dist_m = math.sqrt(dx ** 2 + dy ** 2)
                 current_speed = (dist_m / dt) * 3.6 * bat_speed_factor
 
-            history_speeds.append((frame_idx, current_speed))
-
-            # 狀態機判斷
+            # 揮棒狀態機判定
             if cooldown_counter > 0:
                 cooldown_counter -= 1
 
             start_trigger_speed = min_peak_speed * 0.4
 
             if cooldown_counter == 0:
-                # 狀態 0: 準備/等待觸發
                 if swing_state == 0:
                     if current_speed >= start_trigger_speed:
                         swing_state = 1
@@ -288,7 +278,6 @@ if uploaded_file is not None:
                         max_speed_in_swing = current_speed
                         peak_frame_in_swing = frame_idx
 
-                # 狀態 1: 揮棒進行中（加速與峰值）
                 elif swing_state == 1:
                     swing_frames_data.append(
                         {
@@ -303,7 +292,6 @@ if uploaded_file is not None:
                         max_speed_in_swing = current_speed
                         peak_frame_in_swing = frame_idx
 
-                    # 減速達到峰值的 60% 時，轉入狀態 2
                     if (
                             max_speed_in_swing >= min_peak_speed
                             and current_speed < max_speed_in_swing * 0.6
@@ -316,7 +304,6 @@ if uploaded_file is not None:
                     ):
                         swing_state = 0
 
-                # 狀態 2: 收棒與位移確認
                 elif swing_state == 2:
                     swing_frames_data.append(
                         {
@@ -327,7 +314,6 @@ if uploaded_file is not None:
                     )
                     swing_raw_frames.append(annotated_frame)
 
-                    # 當速度降回觸發值以下，或是蒐集超過 30 幀，強制進入結算 (State 3)
                     if (
                             current_speed <= start_trigger_speed * 0.8
                             or len(swing_frames_data) > 40
@@ -347,7 +333,7 @@ if uploaded_file is not None:
                             swing_state = 0
                             cooldown_counter = int(fps * 0.3)
 
-                # 狀態 3: 揮棒完成，儲存影片與結算數據
+                # 揮棒結算與短片匯出
                 if swing_state == 3:
                     launch_angle = 0.0
                     peak_sub_idx = [
@@ -368,48 +354,27 @@ if uploaded_file is not None:
                                     math.atan2(-dy_launch, dx_launch)
                                 )
 
-                    swing_num = len(swing_events) + 1
+                    swing_num = len(st.session_state.swing_events) + 1
                     clip_filename = os.path.join(clip_dir, f"swing_{swing_num}.webm")
-
-                    # 儲存短片 (webm 格式相容網頁)
                     actual_clip_path = save_swing_clip(
                         swing_raw_frames, fps, width, height, clip_filename
                     )
 
                     event_data = {
-                        "次數": f"第 {swing_num} 次",
-                        "初速 (km/h)": round(max_speed_in_swing, 1),
-                        "仰角 (度)": round(launch_angle, 1),
-                        "耗時 (秒)": round(len(swing_frames_data) / fps, 2),
+                        "次數": f"第 {swing_num} 次揮棒",
+                        "初速": f"{max_speed_in_swing:.1f} km/h",
+                        "仰角": f"{launch_angle:.1f}°",
+                        "耗時": f"{len(swing_frames_data) / fps:.2f} 秒",
                         "clip_path": actual_clip_path,
+                        "speed_num": round(max_speed_in_swing, 1),
+                        "angle_num": round(launch_angle, 1),
                     }
-                    swing_events.append(event_data)
-
-                    # 即時更新 UI
-                    with metrics_placeholder.container():
-                        st.success(f"🎉 成功偵測第 {swing_num} 次完整揮棒！")
-                        m1, m2 = st.columns(2)
-                        m1.metric(
-                            label="估算初速",
-                            value=f"{max_speed_in_swing:.1f} km/h",
-                        )
-                        m2.metric(label="預測仰角", value=f"{launch_angle:.1f}°")
-
-                    df_events = pd.DataFrame(swing_events)
-                    table_placeholder.dataframe(
-                        df_events.drop(columns=["clip_path"]),
-                        use_container_width=True,
-                    )
-
-                    with replay_placeholder.container():
-                        st.subheader(f"🎬 第 {swing_num} 次揮棒動作回放")
-                        if os.path.exists(actual_clip_path):
-                            st.video(actual_clip_path)
+                    st.session_state.swing_events.append(event_data)
 
                     swing_state = 0
                     cooldown_counter = int(fps * 0.8)
 
-            # 1. 繪製狀態文字
+            # 更新主畫面
             cv2.putText(
                 annotated_frame,
                 f"STATE: {swing_state} | SPEED: {current_speed:.1f} km/h",
@@ -420,11 +385,9 @@ if uploaded_file is not None:
                 2,
             )
 
-            # 2. 轉換格式與確保正確數據型態
             frame_display = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
             frame_display = np.ascontiguousarray(frame_display, dtype=np.uint8)
 
-            # 3. 刷新主畫面 (確保即時動作呈現)
             st_frame.image(
                 frame_display,
                 channels="RGB",
@@ -432,3 +395,44 @@ if uploaded_file is not None:
             )
 
     cap.release()
+
+    # ==============================================================================
+    # 4. 下方分段選擇與歷史回放區域 (讓使用者自由切換 第 1、2、3 次揮棒)
+    # ==============================================================================
+    if st.session_state.swing_events:
+        events = st.session_state.swing_events
+        st.success(f"✅ 影片分析完成！一共偵測出 {len(events)} 次有效揮棒。")
+
+        # 1. 建立選單選項 list，例如：["第 1 次揮棒", "第 2 次揮棒", "第 3 次揮棒"]
+        option_list = [e["次數"] for e in events]
+
+        # 下拉選單選擇第幾次揮棒
+        selected_swing_name = st.selectbox(
+            "🎯 請選擇要查看與回放的揮棒次數：",
+            options=option_list,
+            index=len(option_list) - 1,  # 預設顯示最新一次
+        )
+
+        # 找到對應的揮棒資料
+        selected_event = next(
+            (e for e in events if e["次數"] == selected_swing_name), events[0]
+        )
+
+        # 2. 顯示該次揮棒的數據卡片
+        col1, col2, col3 = st.columns(3)
+        col1.metric("⚡ 估算初速", selected_event["初速"])
+        col2.metric("📐 預測仰角", selected_event["仰角"])
+        col3.metric("⏱️ 揮棒耗時", selected_event["耗時"])
+
+        # 3. 播放該次切出的短片
+        st.markdown(f"#### 🎬 {selected_event['次數']} 慢動作回放")
+        if os.path.exists(selected_event["clip_path"]):
+            st.video(selected_event["clip_path"])
+
+        # 4. 顯示所有揮棒的總表比較
+        with st.expander("📊 查看所有揮棒數據總表"):
+            df_all = pd.DataFrame(events)[["次數", "初速", "仰角", "耗時"]]
+            st.dataframe(df_all, use_container_width=True)
+
+    else:
+        st.warning("⚠️ 影片處理完畢，未偵測到達到門檻的揮棒動作。請嘗試在側邊欄調低「最低揮棒峰值速度」或「手腕最小位移」。")
