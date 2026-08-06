@@ -72,10 +72,10 @@ POSE_CONNECTIONS = [
 ]
 
 
-def process_frame(image, landmarks_list, width, height):
-    """擷取骨架、重心與手腕座標"""
+def process_frame(image, landmarks_list, width, height, bat_length_px):
+    """擷取骨架、重心、手腕與棒頭座標"""
     if not landmarks_list:
-        return None, None, None
+        return None, None, None, None
 
     landmarks = landmarks_list[0]
 
@@ -95,35 +95,53 @@ def process_frame(image, landmarks_list, width, height):
 
     try:
         left_shoulder, right_shoulder = get_pt(11), get_pt(12)
+        right_elbow = get_pt(14)
+        wrist_pt = get_pt(16)  # 右手腕
         left_hip, right_hip = get_pt(23), get_pt(24)
         left_knee, right_knee = get_pt(25), get_pt(26)
         left_ankle, right_ankle = get_pt(27), get_pt(28)
-        wrist_pt = get_pt(16)  # 右手腕
 
         torso_center = (
-                               left_shoulder + right_shoulder + left_hip + right_hip
-                       ) / 4.0
+            left_shoulder + right_shoulder + left_hip + right_hip
+        ) / 4.0
         left_leg_center = (left_hip + left_knee + left_ankle) / 3.0
         right_leg_center = (right_hip + right_knee + right_ankle) / 3.0
         arms_center = (left_shoulder + right_shoulder) / 2.0
 
         com = (
-                torso_center * 0.50
-                + left_leg_center * 0.15
-                + right_leg_center * 0.15
-                + arms_center * 0.20
+            torso_center * 0.50
+            + left_leg_center * 0.15
+            + right_leg_center * 0.15
+            + arms_center * 0.20
         )
         cx, cy = int(com[0]), int(com[1])
         cv2.circle(image, (cx, cy), 8, (0, 0, 255), -1)
 
+        # 棒頭向量延伸
+        arm_vector = wrist_pt - right_elbow
+        arm_norm = np.linalg.norm(arm_vector)
+
+        if arm_norm > 0:
+            unit_vector = arm_vector / arm_norm
+            bat_head_pt = wrist_pt + unit_vector * bat_length_px
+        else:
+            bat_head_pt = wrist_pt
+
+        bat_head = (int(bat_head_pt[0]), int(bat_head_pt[1]))
+        wrist = (int(wrist_pt[0]), int(wrist_pt[1]))
+
+        cv2.line(image, wrist, bat_head, (255, 0, 255), 3)
+        cv2.circle(image, bat_head, 6, (0, 255, 255), -1)
+
         shoulder_mid = (left_shoulder + right_shoulder) / 2.0
         return (
             (cx, cy),
-            (int(wrist_pt[0]), int(wrist_pt[1])),
+            wrist,
+            bat_head,
             (int(shoulder_mid[0]), int(shoulder_mid[1])),
         )
     except Exception:
-        return None, None, None
+        return None, None, None, None
 
 
 def save_swing_clip(frames, fps, width, height, output_path):
@@ -149,7 +167,7 @@ if not os.path.exists(MODEL_PATH):
     st.stop()
 
 # 側邊欄設定
-st.sidebar.header("⚙️ 實體尺寸與參數校正")
+st.sidebar.header("⚙️ 實體尺寸與球棒設定")
 ref_pixel = st.sidebar.number_input(
     "參考物像素長度 (Pixels)", value=150.0, step=10.0
 )
@@ -157,6 +175,14 @@ ref_meters = st.sidebar.number_input(
     "參考物實際長度 (公尺)", value=1.8, step=0.1
 )
 meters_per_pixel = ref_meters / ref_pixel if ref_pixel > 0 else 0.01
+
+bat_length_px = st.sidebar.slider(
+    "棒長估算延伸量 (Pixels)",
+    min_value=30.0,
+    max_value=250.0,
+    value=100.0,
+    step=10.0,
+)
 
 bat_speed_factor = st.sidebar.slider(
     "手腕到球速轉換係數", min_value=1.0, max_value=2.0, value=1.3, step=0.05
@@ -193,20 +219,20 @@ if uploaded_file is not None:
     width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-    # 使用 Layout 區隔主畫面與下方回放區
     st.markdown("### 📹 全程動態分析預覽")
     st_frame = st.empty()
 
     st.markdown("---")
-    st.markdown("### ⚡ 揮棒分段分析與自由回放")
+    st.markdown("### ⚡ 揮棒分段分析與獨立數據表格")
 
-    metrics_placeholder = st.empty()
-
-    # Session State 儲存切出的揮棒紀錄
-    if "swing_events" not in st.session_state or st.sidebar.button("🔄 重新分析影片"):
+    if "swing_events" not in st.session_state or st.sidebar.button(
+        "🔄 重新分析影片"
+    ):
         st.session_state.swing_events = []
 
     history_wrist = []
+    current_swing_trajectory = []
+
     swing_state = 0
     swing_frames_data = []
     swing_raw_frames = []
@@ -225,7 +251,6 @@ if uploaded_file is not None:
 
     clip_dir = tempfile.mkdtemp()
 
-    # 執行影片串流處理
     with vision.PoseLandmarker.create_from_options(options) as landmarker:
         frame_idx = 0
 
@@ -245,25 +270,32 @@ if uploaded_file is not None:
             result = landmarker.detect_for_video(mp_image, timestamp_ms)
 
             current_wrist = None
+            current_bat_head = None
+
             if result.pose_landmarks:
-                com, wrist, shoulder_mid = process_frame(
-                    annotated_frame, result.pose_landmarks, width, height
+                com, wrist, bat_head, shoulder_mid = process_frame(
+                    annotated_frame,
+                    result.pose_landmarks,
+                    width,
+                    height,
+                    bat_length_px,
                 )
                 if wrist:
                     current_wrist = wrist
+                    current_bat_head = bat_head
                     history_wrist.append((frame_idx, wrist[0], wrist[1]))
 
-            # 計算即時速度
+            # 即時速度
             current_speed = 0.0
             if len(history_wrist) >= 2:
                 p1 = history_wrist[-2]
                 p2 = history_wrist[-1]
                 dx = (p2[1] - p1[1]) * meters_per_pixel
                 dy = (p2[2] - p1[2]) * meters_per_pixel
-                dist_m = math.sqrt(dx ** 2 + dy ** 2)
+                dist_m = math.sqrt(dx**2 + dy**2)
                 current_speed = (dist_m / dt) * 3.6 * bat_speed_factor
 
-            # 揮棒狀態機判定
+            # 狀態機
             if cooldown_counter > 0:
                 cooldown_counter -= 1
 
@@ -275,48 +307,56 @@ if uploaded_file is not None:
                         swing_state = 1
                         swing_frames_data = []
                         swing_raw_frames = []
+                        current_swing_trajectory = []
                         max_speed_in_swing = current_speed
                         peak_frame_in_swing = frame_idx
 
                 elif swing_state == 1:
+                    if current_bat_head:
+                        current_swing_trajectory.append(current_bat_head)
+
                     swing_frames_data.append(
                         {
                             "frame": frame_idx,
                             "wrist": current_wrist,
+                            "bat_head": current_bat_head,
                             "speed": current_speed,
                         }
                     )
-                    swing_raw_frames.append(annotated_frame)
 
                     if current_speed > max_speed_in_swing:
                         max_speed_in_swing = current_speed
                         peak_frame_in_swing = frame_idx
 
                     if (
-                            max_speed_in_swing >= min_peak_speed
-                            and current_speed < max_speed_in_swing * 0.6
+                        max_speed_in_swing >= min_peak_speed
+                        and current_speed < max_speed_in_swing * 0.6
                     ):
                         swing_state = 2
                     elif (
-                            current_speed < start_trigger_speed
-                            and max_speed_in_swing < min_peak_speed
-                            and len(swing_frames_data) > 15
+                        current_speed < start_trigger_speed
+                        and max_speed_in_swing < min_peak_speed
+                        and len(swing_frames_data) > 15
                     ):
                         swing_state = 0
+                        current_swing_trajectory = []
 
                 elif swing_state == 2:
+                    if current_bat_head:
+                        current_swing_trajectory.append(current_bat_head)
+
                     swing_frames_data.append(
                         {
                             "frame": frame_idx,
                             "wrist": current_wrist,
+                            "bat_head": current_bat_head,
                             "speed": current_speed,
                         }
                     )
-                    swing_raw_frames.append(annotated_frame)
 
                     if (
-                            current_speed <= start_trigger_speed * 0.8
-                            or len(swing_frames_data) > 40
+                        current_speed <= start_trigger_speed * 0.8
+                        or len(swing_frames_data) > 40
                     ):
                         x_coords = [
                             item["wrist"][0]
@@ -331,9 +371,25 @@ if uploaded_file is not None:
                             swing_state = 3
                         else:
                             swing_state = 0
+                            current_swing_trajectory = []
                             cooldown_counter = int(fps * 0.3)
 
-                # 揮棒結算與短片匯出
+                # 繪製軌跡
+                if len(current_swing_trajectory) > 1:
+                    pts = np.array(current_swing_trajectory, np.int32)
+                    pts = pts.reshape((-1, 1, 2))
+                    cv2.polylines(
+                        annotated_frame,
+                        [pts],
+                        isClosed=False,
+                        color=(0, 255, 255),
+                        thickness=4,
+                    )
+
+                if swing_state in [1, 2]:
+                    swing_raw_frames.append(annotated_frame.copy())
+
+                # 結算與建立數據表
                 if swing_state == 3:
                     launch_angle = 0.0
                     peak_sub_idx = [
@@ -347,15 +403,53 @@ if uploaded_file is not None:
                         p_c = swing_frames_data[p_idx]["wrist"]
                         p_post = swing_frames_data[post_idx]["wrist"]
                         if p_c and p_post:
-                            dx_launch = (p_post[0] - p_c[0]) * meters_per_pixel
-                            dy_launch = (p_post[1] - p_c[1]) * meters_per_pixel
-                            if abs(dx_launch) > 0.0001 or abs(dy_launch) > 0.0001:
+                            dx_launch = (
+                                p_post[0] - p_c[0]
+                            ) * meters_per_pixel
+                            dy_launch = (
+                                p_post[1] - p_c[1]
+                            ) * meters_per_pixel
+                            if (
+                                abs(dx_launch) > 0.0001
+                                or abs(dy_launch) > 0.0001
+                            ):
                                 launch_angle = math.degrees(
                                     math.atan2(-dy_launch, dx_launch)
                                 )
 
+                    # 建立該次揮棒的逐幀詳細 DataFrame
+                    frame_logs = []
+                    start_f = (
+                        swing_frames_data[0]["frame"]
+                        if swing_frames_data
+                        else 0
+                    )
+                    for item in swing_frames_data:
+                        rel_time = (item["frame"] - start_f) / fps
+                        w_x = item["wrist"][0] if item["wrist"] else None
+                        w_y = item["wrist"][1] if item["wrist"] else None
+                        b_x = (
+                            item["bat_head"][0] if item["bat_head"] else None
+                        )
+                        b_y = (
+                            item["bat_head"][1] if item["bat_head"] else None
+                        )
+                        frame_logs.append(
+                            {
+                                "相對時間 (秒)": round(rel_time, 2),
+                                "即時速度 (km/h)": round(item["speed"], 1),
+                                "手腕 X": w_x,
+                                "手腕 Y": w_y,
+                                "棒頭 X": b_x,
+                                "棒頭 Y": b_y,
+                            }
+                        )
+                    detailed_df = pd.DataFrame(frame_logs)
+
                     swing_num = len(st.session_state.swing_events) + 1
-                    clip_filename = os.path.join(clip_dir, f"swing_{swing_num}.webm")
+                    clip_filename = os.path.join(
+                        clip_dir, f"swing_{swing_num}.webm"
+                    )
                     actual_clip_path = save_swing_clip(
                         swing_raw_frames, fps, width, height, clip_filename
                     )
@@ -365,16 +459,17 @@ if uploaded_file is not None:
                         "初速": f"{max_speed_in_swing:.1f} km/h",
                         "仰角": f"{launch_angle:.1f}°",
                         "耗時": f"{len(swing_frames_data) / fps:.2f} 秒",
+                        "total_frames": len(swing_frames_data),
                         "clip_path": actual_clip_path,
-                        "speed_num": round(max_speed_in_swing, 1),
-                        "angle_num": round(launch_angle, 1),
+                        "detailed_df": detailed_df,
                     }
                     st.session_state.swing_events.append(event_data)
 
                     swing_state = 0
+                    current_swing_trajectory = []
                     cooldown_counter = int(fps * 0.8)
 
-            # 更新主畫面
+            # 更新畫面
             cv2.putText(
                 annotated_frame,
                 f"STATE: {swing_state} | SPEED: {current_speed:.1f} km/h",
@@ -397,42 +492,56 @@ if uploaded_file is not None:
     cap.release()
 
     # ==============================================================================
-    # 4. 下方分段選擇與歷史回放區域 (讓使用者自由切換 第 1、2、3 次揮棒)
+    # 4. 獨立揮棒數據表格與短片回放區域
     # ==============================================================================
     if st.session_state.swing_events:
         events = st.session_state.swing_events
         st.success(f"✅ 影片分析完成！一共偵測出 {len(events)} 次有效揮棒。")
 
-        # 1. 建立選單選項 list，例如：["第 1 次揮棒", "第 2 次揮棒", "第 3 次揮棒"]
         option_list = [e["次數"] for e in events]
-
-        # 下拉選單選擇第幾次揮棒
         selected_swing_name = st.selectbox(
             "🎯 請選擇要查看與回放的揮棒次數：",
             options=option_list,
-            index=len(option_list) - 1,  # 預設顯示最新一次
+            index=len(option_list) - 1,
         )
 
-        # 找到對應的揮棒資料
         selected_event = next(
             (e for e in events if e["次數"] == selected_swing_name), events[0]
         )
 
-        # 2. 顯示該次揮棒的數據卡片
-        col1, col2, col3 = st.columns(3)
+        # 核心數據卡片
+        col1, col2, col3, col4 = st.columns(4)
         col1.metric("⚡ 估算初速", selected_event["初速"])
         col2.metric("📐 預測仰角", selected_event["仰角"])
         col3.metric("⏱️ 揮棒耗時", selected_event["耗時"])
+        col4.metric("🎞️ 總記錄幀數", f"{selected_event['total_frames']} 幀")
 
-        # 3. 播放該次切出的短片
-        st.markdown(f"#### 🎬 {selected_event['次數']} 慢動作回放")
-        if os.path.exists(selected_event["clip_path"]):
-            st.video(selected_event["clip_path"])
+        # 影片播放與數據表開關分頁
+        tab1, tab2 = st.tabs(["🎬 慢動作影片回放", "📊 該次揮棒獨立數據表"])
 
-        # 4. 顯示所有揮棒的總表比較
-        with st.expander("📊 查看所有揮棒數據總表"):
-            df_all = pd.DataFrame(events)[["次數", "初速", "仰角", "耗時"]]
+        with tab1:
+            st.markdown(f"#### 🎬 {selected_event['次數']} 慢動作回放")
+            if os.path.exists(selected_event["clip_path"]):
+                st.video(selected_event["clip_path"])
+
+        with tab2:
+            st.markdown(f"#### 📋 {selected_event['次數']} - 逐幀速度與軌跡詳細數據表")
+            st.dataframe(
+                selected_event["detailed_df"],
+                use_container_width=True,
+                height=300,
+            )
+            # 下載該次揮棒數據 CSV 檔
+            csv_data = selected_event["detailed_df"].to_csv(index=False).encode('utf-8-sig')
+            st.download_button(
+                label=f"📥 下載 {selected_event['次數']} 數據明細 (CSV)",
+                data=csv_data,
+                file_name=f"{selected_event['次數']}_detail.csv",
+                mime="text/csv",
+            )
+
+        st.markdown("---")
+        with st.expander("📊 查看所有歷史揮棒數據彙整表"):
+            df_all = pd.DataFrame(events)[["次數", "初速", "仰角", "耗時", "total_frames"]]
+            df_all.columns = ["次數", "初速", "仰角", "耗時", "總幀數"]
             st.dataframe(df_all, use_container_width=True)
-
-    else:
-        st.warning("⚠️ 影片處理完畢，未偵測到達到門檻的揮棒動作。請嘗試在側邊欄調低「最低揮棒峰值速度」或「手腕最小位移」。")
