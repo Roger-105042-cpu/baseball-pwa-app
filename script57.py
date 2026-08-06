@@ -1,6 +1,7 @@
 import math
 import os
 import tempfile
+import urllib.request
 import cv2
 import mediapipe as mp
 import numpy as np
@@ -10,7 +11,7 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
 # ==============================================================================
-# 0. 頁面與全域參數設定
+# 0. 頁面設定與 MediaPipe 模型自動下載機制 (修復 FileNotFoundError)
 # ==============================================================================
 st.set_page_config(
     page_title="棒球揮棒動作姿態與初速分析系統",
@@ -18,8 +19,22 @@ st.set_page_config(
     layout="wide",
 )
 
-# 系統與演算參數
-MODEL_PATH = "pose_landmarker_heavy.task"  # 請確保此路徑有 MediaPipe 模型檔案
+MODEL_PATH = "pose_landmarker_heavy.task"
+MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task"
+
+
+@st.cache_resource
+def ensure_model_file():
+    """自動檢測並下載 MediaPipe 缺失的模型檔"""
+    if not os.path.exists(MODEL_PATH):
+        with st.spinner("⏳ 首次於雲端執行，正在從官方下載 MediaPipe 模型檔..."):
+            urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+
+
+# 執行下載檢測 (只會在伺服器缺少模型時自動下載 1 次)
+ensure_model_file()
+
+# 系統與演算預設參數
 meters_per_pixel = 0.0025  # 像素轉公尺比例
 bat_speed_factor = 1.35  # 手腕轉棒頭速度放大係數
 min_peak_speed = 35.0  # 判定為有效揮棒的最低峰值速度 (km/h)
@@ -30,6 +45,7 @@ target_width = 800  # 圖像縮放最大寬度
 
 st.title("⚾ 棒球揮棒動作姿態與初速分析系統")
 st.caption("基於 MediaPipe Pose Landmarker 之 AI 骨架偵測與慢動作回放系統")
+
 
 # ==============================================================================
 # 1. 輔助運算與影片剪輯函式
@@ -96,8 +112,8 @@ def process_frame(frame, pose_landmarks, width, height, bat_length):
 
 
 def save_swing_clip(frames, fps, width, height, output_path):
-    """將揮棒片段寫入二進位影片檔"""
-    fourcc = cv2.VideoWriter_fourcc(*"VP80")  # WebM 格式在瀏覽器相容性較佳
+    """將揮棒片段寫入 WebM 影音檔"""
+    fourcc = cv2.VideoWriter_fourcc(*"VP80")
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
     for f in frames:
         out.write(f)
@@ -106,17 +122,16 @@ def save_swing_clip(frames, fps, width, height, output_path):
 
 
 # ==============================================================================
-# 2. Streamlit 檔案上傳與 Session 控制
+# 2. Streamlit 檔案上傳與 Session 狀態初始化
 # ==============================================================================
 uploaded_file = st.file_uploader(
     "📁 選擇或上傳揮棒影片", type=["mp4", "avi", "mov", "m4v"]
 )
 
 if uploaded_file is not None:
-    # 建立唯一識別 key，確保上傳同一檔案時不會被重置
+    # 建立檔案獨有識別碼，防範切換同名檔案時誤重置
     file_key = f"{uploaded_file.name}_{uploaded_file.size}"
 
-    # 初始化 Session State
     if (
         "current_file_key" not in st.session_state
         or st.session_state.current_file_key != file_key
@@ -125,7 +140,6 @@ if uploaded_file is not None:
         st.session_state.swing_events = []
         st.session_state.is_analyzed = False
 
-    # 側邊欄：手動重新分析按鈕
     with st.sidebar:
         st.header("⚙️ 控制選項")
         if st.button("🔄 重新分析影片", use_container_width=True):
@@ -134,10 +148,9 @@ if uploaded_file is not None:
             st.rerun()
 
     # ==========================================================================
-    # 3. 核心運算區 (僅在「未分析過」時跑 MediaPipe，解決切換選單當機)
+    # 3. 核心運算區 (僅在「未分析過」時跑 MediaPipe，解決選單切換當機問題)
     # ==========================================================================
     if not st.session_state.is_analyzed:
-        # 將上傳的檔案寫入暫存
         tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
         tfile.write(uploaded_file.read())
         tfile.close()
@@ -147,7 +160,7 @@ if uploaded_file is not None:
         orig_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
         orig_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 
-        # 尺寸自動縮放計算
+        # 比例縮放控制
         if orig_width > target_width:
             scale = target_width / float(orig_width)
             proc_width = target_width
@@ -161,7 +174,6 @@ if uploaded_file is not None:
         st_frame = st.empty()
         progress_bar = st.progress(0)
 
-        # 狀態追蹤變數
         history_wrist = []
         current_swing_trajectory = []
         swing_state = 0  # 0: 準備, 1: 揮棒中, 2: 減速中, 3: 觸發結算
@@ -173,7 +185,7 @@ if uploaded_file is not None:
 
         total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
 
-        # 初始化 MediaPipe Pose Landmarker
+        # 啟動 Pose Landmarker 任務
         base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
         options = vision.PoseLandmarkerOptions(
             base_options=base_options,
@@ -232,7 +244,6 @@ if uploaded_file is not None:
                         current_bat_head = bat_head
                         history_wrist.append((frame_idx, wrist[0], wrist[1]))
 
-                # 估算即時速度 (km/h)
                 current_speed = 0.0
                 if len(history_wrist) >= 2:
                     p1 = history_wrist[-2]
@@ -250,7 +261,7 @@ if uploaded_file is not None:
 
                 start_trigger_speed = min_peak_speed * 0.4
 
-                # 揮棒狀態機邏輯
+                # 揮棒觸發邏輯判定
                 if cooldown_counter == 0:
                     if swing_state == 0:
                         if current_speed >= start_trigger_speed:
@@ -322,7 +333,7 @@ if uploaded_file is not None:
                                     (fps * 0.3) // frame_skip_step
                                 )
 
-                    # 繪製棒頭黃色軌跡線
+                    # 畫黃色揮棒軌跡
                     if len(current_swing_trajectory) > 1:
                         pts = np.array(
                             current_swing_trajectory, np.int32
@@ -334,7 +345,7 @@ if uploaded_file is not None:
                     if swing_state in [1, 2]:
                         swing_raw_frames.append(annotated_frame.copy())
 
-                    # 揮棒動作結束，匯出數據與影片
+                    # 結算本次揮棒
                     if swing_state == 3:
                         launch_angle = 0.0
                         peak_sub_idx = [
@@ -402,7 +413,7 @@ if uploaded_file is not None:
                             clip_filename,
                         )
 
-                        # 將二進位檔讀入記憶體，避免 Session 在重繪時取不到影片
+                        # 將二進位檔傳入 Session，避開雲端檔案權限與死鎖瓶頸
                         with open(actual_clip_path, "rb") as vf:
                             video_bytes = vf.read()
 
@@ -420,7 +431,7 @@ if uploaded_file is not None:
                         current_swing_trajectory = []
                         cooldown_counter = int((fps * 0.8) // frame_skip_step)
 
-                # 即時渲染串流畫面 (每 3 幀刷新，節省運算效能)
+                # 即時渲染預覽
                 if frame_idx % (frame_skip_step * 3) == 0:
                     frame_display = cv2.cvtColor(
                         annotated_frame, cv2.COLOR_BGR2RGB
@@ -433,13 +444,13 @@ if uploaded_file is not None:
         st_frame.empty()
         progress_bar.empty()
 
-        # 標記分析完成，保存運算結果並觸發 Re-run 刷新 UI
+        # 鎖定狀態並觸發 UI 更新
         st.session_state.swing_events = detected_events
         st.session_state.is_analyzed = True
         st.rerun()
 
     # ==========================================================================
-    # 4. 揮棒結果展示區 (點擊下拉選單時瞬間切換，0 秒卡頓)
+    # 4. 揮棒結果展示區 (0 秒即時切換區)
     # ==========================================================================
     if st.session_state.swing_events:
         events = st.session_state.swing_events
