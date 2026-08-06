@@ -167,6 +167,23 @@ if not os.path.exists(MODEL_PATH):
     st.stop()
 
 # 側邊欄設定
+st.sidebar.header("🚀 效能與分析加速設定")
+target_width = st.sidebar.selectbox(
+    "分析處理解析度 (影響處理速度)",
+    options=[480, 640, 720, 1080],
+    index=1,
+    help="降低解析度可大幅縮短分析時間",
+)
+
+frame_skip_step = st.sidebar.slider(
+    "抽幀採訪步階 (Frame Skip)",
+    min_value=1,
+    max_value=3,
+    value=1,
+    help="1: 每幀分析(最精準); 2: 每2幀分析(速度翻倍)",
+)
+
+st.sidebar.markdown("---")
 st.sidebar.header("⚙️ 實體尺寸與球棒設定")
 ref_pixel = st.sidebar.number_input(
     "參考物像素長度 (Pixels)", value=150.0, step=10.0
@@ -216,8 +233,18 @@ if uploaded_file is not None:
 
     cap = cv2.VideoCapture(tfile.name)
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
-    width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-    height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+    orig_width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+    orig_height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+
+    # [建議 1: 降採樣計算] 計算縮放比例
+    if orig_width > target_width:
+        scale = target_width / float(orig_width)
+        proc_width = target_width
+        proc_height = int(orig_height * scale)
+    else:
+        scale = 1.0
+        proc_width = orig_width
+        proc_height = orig_height
 
     st.markdown("### 📹 全程動態分析預覽")
     st_frame = st.empty()
@@ -240,8 +267,6 @@ if uploaded_file is not None:
     peak_frame_in_swing = 0
     cooldown_counter = 0
 
-    dt = 1.0 / fps
-
     base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
     options = vision.PoseLandmarkerOptions(
         base_options=base_options,
@@ -253,6 +278,7 @@ if uploaded_file is not None:
 
     with vision.PoseLandmarker.create_from_options(options) as landmarker:
         frame_idx = 0
+        last_wrist_time = 0.0
 
         while cap.isOpened():
             ret, frame = cap.read()
@@ -260,8 +286,21 @@ if uploaded_file is not None:
                 break
 
             frame_idx += 1
-            annotated_frame = frame.copy()
-            rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+
+            # [建議 2: 跳幀機制] 依照步階跳過非關鍵幀
+            if frame_skip_step > 1 and (frame_idx % frame_skip_step != 0):
+                continue
+
+            # [建議 1: 影像降採樣] 將圖像縮放後再丟入 MediaPipe 與繪圖，極大減輕運算負荷
+            if scale != 1.0:
+                frame_resized = cv2.resize(
+                    frame, (proc_width, proc_height), interpolation=cv2.INTER_AREA
+                )
+            else:
+                frame_resized = frame.copy()
+
+            annotated_frame = frame_resized.copy()
+            rgb_frame = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
             mp_image = mp.Image(
                 image_format=mp.ImageFormat.SRGB, data=rgb_frame
             )
@@ -276,8 +315,8 @@ if uploaded_file is not None:
                 com, wrist, bat_head, shoulder_mid = process_frame(
                     annotated_frame,
                     result.pose_landmarks,
-                    width,
-                    height,
+                    proc_width,
+                    proc_height,
                     bat_length_px,
                 )
                 if wrist:
@@ -285,17 +324,20 @@ if uploaded_file is not None:
                     current_bat_head = bat_head
                     history_wrist.append((frame_idx, wrist[0], wrist[1]))
 
-            # 即時速度
+            # 計算即時速度（動態考慮跳幀的時間差 dt）
             current_speed = 0.0
             if len(history_wrist) >= 2:
                 p1 = history_wrist[-2]
                 p2 = history_wrist[-1]
+                frame_diff = p2[0] - p1[0]
+                dt = (frame_diff / fps) if frame_diff > 0 else (1.0 / fps)
+
                 dx = (p2[1] - p1[1]) * meters_per_pixel
                 dy = (p2[2] - p1[2]) * meters_per_pixel
                 dist_m = math.sqrt(dx**2 + dy**2)
                 current_speed = (dist_m / dt) * 3.6 * bat_speed_factor
 
-            # 狀態機
+            # 揮棒狀態機
             if cooldown_counter > 0:
                 cooldown_counter -= 1
 
@@ -336,7 +378,7 @@ if uploaded_file is not None:
                     elif (
                         current_speed < start_trigger_speed
                         and max_speed_in_swing < min_peak_speed
-                        and len(swing_frames_data) > 15
+                        and len(swing_frames_data) > (15 // frame_skip_step)
                     ):
                         swing_state = 0
                         current_swing_trajectory = []
@@ -356,7 +398,7 @@ if uploaded_file is not None:
 
                     if (
                         current_speed <= start_trigger_speed * 0.8
-                        or len(swing_frames_data) > 40
+                        or len(swing_frames_data) > (40 // frame_skip_step)
                     ):
                         x_coords = [
                             item["wrist"][0]
@@ -372,9 +414,9 @@ if uploaded_file is not None:
                         else:
                             swing_state = 0
                             current_swing_trajectory = []
-                            cooldown_counter = int(fps * 0.3)
+                            cooldown_counter = int((fps * 0.3) // frame_skip_step)
 
-                # 繪製軌跡
+                # 繪製棒頭軌跡 (亮黃色)
                 if len(current_swing_trajectory) > 1:
                     pts = np.array(current_swing_trajectory, np.int32)
                     pts = pts.reshape((-1, 1, 2))
@@ -383,7 +425,7 @@ if uploaded_file is not None:
                         [pts],
                         isClosed=False,
                         color=(0, 255, 255),
-                        thickness=4,
+                        thickness=3,
                     )
 
                 if swing_state in [1, 2]:
@@ -399,7 +441,7 @@ if uploaded_file is not None:
                     ]
                     if peak_sub_idx:
                         p_idx = peak_sub_idx[0]
-                        post_idx = min(len(swing_frames_data) - 1, p_idx + 3)
+                        post_idx = min(len(swing_frames_data) - 1, p_idx + 2)
                         p_c = swing_frames_data[p_idx]["wrist"]
                         p_post = swing_frames_data[post_idx]["wrist"]
                         if p_c and p_post:
@@ -417,7 +459,6 @@ if uploaded_file is not None:
                                     math.atan2(-dy_launch, dx_launch)
                                 )
 
-                    # 建立該次揮棒的逐幀詳細 DataFrame
                     frame_logs = []
                     start_f = (
                         swing_frames_data[0]["frame"]
@@ -451,14 +492,18 @@ if uploaded_file is not None:
                         clip_dir, f"swing_{swing_num}.webm"
                     )
                     actual_clip_path = save_swing_clip(
-                        swing_raw_frames, fps, width, height, clip_filename
+                        swing_raw_frames,
+                        fps / frame_skip_step,
+                        proc_width,
+                        proc_height,
+                        clip_filename,
                     )
 
                     event_data = {
                         "次數": f"第 {swing_num} 次揮棒",
                         "初速": f"{max_speed_in_swing:.1f} km/h",
                         "仰角": f"{launch_angle:.1f}°",
-                        "耗時": f"{len(swing_frames_data) / fps:.2f} 秒",
+                        "耗時": f"{((len(swing_frames_data) * frame_skip_step) / fps):.2f} 秒",
                         "total_frames": len(swing_frames_data),
                         "clip_path": actual_clip_path,
                         "detailed_df": detailed_df,
@@ -467,27 +512,28 @@ if uploaded_file is not None:
 
                     swing_state = 0
                     current_swing_trajectory = []
-                    cooldown_counter = int(fps * 0.8)
+                    cooldown_counter = int((fps * 0.8) // frame_skip_step)
 
-            # 更新畫面
+            # 畫面資訊標記
             cv2.putText(
                 annotated_frame,
                 f"STATE: {swing_state} | SPEED: {current_speed:.1f} km/h",
-                (30, 50),
+                (20, 40),
                 cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
+                0.7,
                 (0, 255, 255),
                 2,
             )
 
-            frame_display = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
-            frame_display = np.ascontiguousarray(frame_display, dtype=np.uint8)
-
-            st_frame.image(
-                frame_display,
-                channels="RGB",
-                use_container_width=True,
-            )
+            # [建議 3: UI 畫面渲染控制] 減少畫面刷新的 Overhead (每2次採樣才更新一次預覽畫面)
+            if frame_idx % (frame_skip_step * 2) == 0:
+                frame_display = cv2.cvtColor(annotated_frame, cv2.COLOR_BGR2RGB)
+                frame_display = np.ascontiguousarray(frame_display, dtype=np.uint8)
+                st_frame.image(
+                    frame_display,
+                    channels="RGB",
+                    use_container_width=True,
+                )
 
     cap.release()
 
@@ -509,14 +555,12 @@ if uploaded_file is not None:
             (e for e in events if e["次數"] == selected_swing_name), events[0]
         )
 
-        # 核心數據卡片
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("⚡ 估算初速", selected_event["初速"])
         col2.metric("📐 預測仰角", selected_event["仰角"])
         col3.metric("⏱️ 揮棒耗時", selected_event["耗時"])
-        col4.metric("🎞️ 總記錄幀數", f"{selected_event['total_frames']} 幀")
+        col4.metric("🎞️ 記錄點數", f"{selected_event['total_frames']} 點")
 
-        # 影片播放與數據表開關分頁
         tab1, tab2 = st.tabs(["🎬 慢動作影片回放", "📊 該次揮棒獨立數據表"])
 
         with tab1:
@@ -531,7 +575,6 @@ if uploaded_file is not None:
                 use_container_width=True,
                 height=300,
             )
-            # 下載該次揮棒數據 CSV 檔
             csv_data = selected_event["detailed_df"].to_csv(index=False).encode('utf-8-sig')
             st.download_button(
                 label=f"📥 下載 {selected_event['次數']} 數據明細 (CSV)",
@@ -543,5 +586,5 @@ if uploaded_file is not None:
         st.markdown("---")
         with st.expander("📊 查看所有歷史揮棒數據彙整表"):
             df_all = pd.DataFrame(events)[["次數", "初速", "仰角", "耗時", "total_frames"]]
-            df_all.columns = ["次數", "初速", "仰角", "耗時", "總幀數"]
+            df_all.columns = ["次數", "初速", "仰角", "耗時", "記錄點數"]
             st.dataframe(df_all, use_container_width=True)
