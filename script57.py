@@ -41,12 +41,12 @@ MODEL_PATH = "pose_landmarker_heavy.task"
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task"
 
 FONT_PATH = "NotoSansTC-Regular.ttf"
-# 使用穩定的 Google Fonts Noto Sans TC 繁體中文字型直連
+# 改用多重備援的穩定字型下載點 (Google Fonts 原始檔)
 NOTO_TC_URL = "https://github.com/google/fonts/raw/main/ofl/notosanstc/NotoSansTC-Regular.ttf"
 
 
 def download_file_with_user_agent(url, save_path):
-    """加上 User-Agent 避免下載遭到阻擋"""
+    """加上完整的 User-Agent 避免下載遭到阻擋"""
     req = urllib.request.Request(
         url,
         headers={
@@ -68,7 +68,10 @@ def ensure_dependencies():
     # 1. 下載 MediaPipe 模型
     if not os.path.exists(MODEL_PATH):
         with st.spinner("⏳ 首次執行，正在下載 MediaPipe 姿態識別模型..."):
-            download_file_with_user_agent(MODEL_URL, MODEL_PATH)
+            try:
+                download_file_with_user_agent(MODEL_URL, MODEL_PATH)
+            except Exception as e:
+                st.error(f"❌ 模型下載失敗: {e}")
 
     # 2. 下載繁體中文字型 (Noto Sans TC)
     if not os.path.exists(FONT_PATH):
@@ -76,7 +79,7 @@ def ensure_dependencies():
             with st.spinner("⏳ 正在下載繁體中文字型 (Noto Sans TC)..."):
                 download_file_with_user_agent(NOTO_TC_URL, FONT_PATH)
         except Exception as e:
-            st.warning(f"⚠️ 字型下載失敗 ({e})，將自動啟用系統內建中文字型備援。")
+            st.warning(f"⚠️ 線上字型下載失敗 ({e})，將自動啟用系統內建 CID 中文字型。")
 
 
 ensure_dependencies()
