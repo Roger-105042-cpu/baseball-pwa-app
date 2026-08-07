@@ -32,7 +32,7 @@ from reportlab.platypus import (
 # 0. 頁面設定與模型/字型下載
 # ==============================================================================
 st.set_page_config(
-    page_title="⚾ 崇明國中-棒球高階揮擊診斷與動力鏈分析系統",
+    page_title="⚾ 棒球高階揮擊診斷與動力鏈分析系統",
     page_icon="⚾",
     layout="wide",
 )
@@ -41,13 +41,12 @@ MODEL_PATH = "pose_landmarker_heavy.task"
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task"
 
 FONT_PATH = "NotoSansTC-Regular.ttf"
-# 使用穩定的 cdnjs CDN 連結
-FONT_URL = "https://cdnjs.cloudflare.com/ajax/libs/ink/3.1.10/fonts/Roboto/Roboto-Regular.ttf"  # 備用基礎字型
-NOTO_TC_URL = "https://fonts.gstatic.com/s/notosanstc/v35/51acWa13VoM9918E26131thXW4q8.ttf"
+# 使用穩定的 Google Fonts Noto Sans TC 繁體中文字型直連
+NOTO_TC_URL = "https://github.com/google/fonts/raw/main/ofl/notosanstc/NotoSansTC-Regular.ttf"
 
 
 def download_file_with_user_agent(url, save_path):
-    """加上 User-Agent 防阻擋的檔案下載函式"""
+    """加上 User-Agent 避免下載遭到阻擋"""
     req = urllib.request.Request(
         url,
         headers={
@@ -66,25 +65,23 @@ def download_file_with_user_agent(url, save_path):
 
 @st.cache_resource
 def ensure_dependencies():
-    # 1. 確保下載 MediaPipe 模型
+    # 1. 下載 MediaPipe 模型
     if not os.path.exists(MODEL_PATH):
         with st.spinner("⏳ 首次執行，正在下載 MediaPipe 姿態識別模型..."):
             download_file_with_user_agent(MODEL_URL, MODEL_PATH)
 
-    # 2. 確保下載繁體中文字型 (Noto Sans TC)
+    # 2. 下載繁體中文字型 (Noto Sans TC)
     if not os.path.exists(FONT_PATH):
         try:
             with st.spinner("⏳ 正在下載繁體中文字型 (Noto Sans TC)..."):
                 download_file_with_user_agent(NOTO_TC_URL, FONT_PATH)
         except Exception as e:
-            st.warning(
-                f"⚠️ 繁體中文字型檔下載失敗 ({e})，PDF 將降級使用內建中文字型。"
-            )
+            st.warning(f"⚠️ 字型下載失敗 ({e})，將自動啟用系統內建中文字型備援。")
 
 
 ensure_dependencies()
 
-# 註冊中文字型
+# 註冊繁體中文字型，防止 PDF 亂碼
 FONT_NAME = "NotoSansTC"
 if os.path.exists(FONT_PATH):
     try:
@@ -96,8 +93,7 @@ else:
     pdfmetrics.registerFont(UnicodeCIDFont("MSung-Light"))
     FONT_NAME = "MSung-Light"
 
-
-st.title("⚾ 崇明國中-棒球高階揮擊診斷與動力鏈分析系統")
+st.title("⚾ 棒球高階揮擊診斷與動力鏈分析系統")
 st.caption(
     "整合 4 大核心指標（揮棒速度、揮棒軌跡長度、攻擊仰角、擊球初速）與下半身髖關節旋轉動力鏈診斷"
 )
@@ -358,7 +354,7 @@ def generate_advanced_diagnostics(
 
 
 def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
-    """產出 PDF 診斷報告（包含防崩潰字型與關鍵擊球畫面截圖）"""
+    """使用 ReportLab 產出包含防亂碼字型與關鍵揮擊截圖之 PDF 診斷報告"""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36
