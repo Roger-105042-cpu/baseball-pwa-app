@@ -479,13 +479,18 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                 d_ang = abs(h2[1] - h1[1])
                 current_hip_speed = d_ang / dt_h
 
+            # ==============================================================================
+            # 【修復誤判】優化後的揮棒偵測與狀態機邏輯
+            # ==============================================================================
+            # 1. 提高啟動門檻，避免收棒小動作誤觸發 (提高至 Peak Speed 的 60%)
+            start_trigger_speed = max(min_peak_speed * 0.60, 10.0)
+
             if cooldown_counter > 0:
                 cooldown_counter -= 1
 
-            start_trigger_speed = min_peak_speed * 0.35
-
             if cooldown_counter == 0:
                 if swing_state == 0:
+                    # 必須達到較高速度門檻才觸發揮棒準備
                     if current_speed >= start_trigger_speed:
                         swing_state = 1
                         swing_frames_data = []
@@ -510,9 +515,10 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                         max_speed_in_swing = current_speed
                         peak_frame_in_swing = frame_idx
 
+                    # 速度從 Peak 降至 50% 以下，進入減速階段
                     if (
                         max_speed_in_swing >= min_peak_speed
-                        and current_speed < max_speed_in_swing * 0.6
+                        and current_speed < max_speed_in_swing * 0.5
                     ):
                         swing_state = 2
 
@@ -528,9 +534,10 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                         "hip_speed": current_hip_speed,
                     })
 
+                    # 速度降低至低點或過長時準備結算
                     if (
-                        current_speed <= start_trigger_speed * 0.8
-                        or len(swing_frames_data) > 35
+                        current_speed <= start_trigger_speed * 0.5
+                        or len(swing_frames_data) > 40
                     ):
                         swing_state = 3
 
@@ -547,72 +554,78 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
 
                 # 結算揮棒並產出分析數據
                 if swing_state == 3:
-                    fit_pts = [
-                        item["bat_head"]
-                        for item in swing_frames_data
-                        if item["bat_head"] is not None
-                    ]
+                    # 2. 增加雙重過濾條件：必須達到 Peak Speed 門檻，且有效持續時間至少 8 幀（約 >0.25 秒）
+                    if (
+                        max_speed_in_swing >= min_peak_speed
+                        and len(swing_frames_data) >= 8
+                    ):
+                        fit_pts = [
+                            item["bat_head"]
+                            for item in swing_frames_data
+                            if item["bat_head"] is not None
+                        ]
 
-                    (
-                        attack_angle,
-                        swing_length,
-                        r_squared,
-                    ) = calculate_attack_angle_and_length(
-                        fit_pts, meters_per_pixel, camera_tilt_deg
-                    )
+                        (
+                            attack_angle,
+                            swing_length,
+                            r_squared,
+                        ) = calculate_attack_angle_and_length(
+                            fit_pts, meters_per_pixel, camera_tilt_deg
+                        )
 
-                    bat_speed = max_speed_in_swing
-                    exit_velocity = (
-                        bat_speed * 1.15
-                    )  # 依揮棒動能換算預估初速
-                    peak_hip_speed = max(
-                        [item["hip_speed"] for item in swing_frames_data]
-                        + [0.0]
-                    )
+                        bat_speed = max_speed_in_swing
+                        exit_velocity = bat_speed * 1.15
+                        peak_hip_speed = max(
+                            [item["hip_speed"] for item in swing_frames_data]
+                            + [0.0]
+                        )
 
-                    report = generate_advanced_diagnostics(
-                        bat_speed=bat_speed,
-                        swing_length=swing_length,
-                        attack_angle=attack_angle,
-                        exit_velocity=exit_velocity,
-                        hip_rot_speed=peak_hip_speed,
-                        r_squared=r_squared,
-                    )
+                        report = generate_advanced_diagnostics(
+                            bat_speed=bat_speed,
+                            swing_length=swing_length,
+                            attack_angle=attack_angle,
+                            exit_velocity=exit_velocity,
+                            hip_rot_speed=peak_hip_speed,
+                            r_squared=r_squared,
+                        )
 
-                    swing_num = len(detected_events) + 1
-                    clip_filename = os.path.join(
-                        clip_dir, f"swing_{swing_num}.webm"
-                    )
+                        swing_num = len(detected_events) + 1
+                        clip_filename = os.path.join(
+                            clip_dir, f"swing_{swing_num}.webm"
+                        )
 
-                    # 儲存短影片
-                    fourcc = cv2.VideoWriter_fourcc(*"VP80")
-                    out = cv2.VideoWriter(
-                        clip_filename,
-                        fourcc,
-                        fps,
-                        (proc_width, proc_height),
-                    )
-                    for f in swing_raw_frames:
-                        out.write(f)
-                    out.release()
+                        # 儲存短影片
+                        fourcc = cv2.VideoWriter_fourcc(*"VP80")
+                        out = cv2.VideoWriter(
+                            clip_filename,
+                            fourcc,
+                            fps,
+                            (proc_width, proc_height),
+                        )
+                        for f in swing_raw_frames:
+                            out.write(f)
+                        out.release()
 
-                    with open(clip_filename, "rb") as vf:
-                        video_bytes = vf.read()
+                        with open(clip_filename, "rb") as vf:
+                            video_bytes = vf.read()
 
-                    detected_events.append({
-                        "次數": f"第 {swing_num} 次揮棒",
-                        "bat_speed": bat_speed,
-                        "swing_length": swing_length,
-                        "attack_angle": attack_angle,
-                        "exit_velocity": exit_velocity,
-                        "hip_speed": peak_hip_speed,
-                        "report": report,
-                        "video_bytes": video_bytes,
-                    })
+                        detected_events.append({
+                            "次數": f"第 {swing_num} 次揮棒",
+                            "bat_speed": bat_speed,
+                            "swing_length": swing_length,
+                            "attack_angle": attack_angle,
+                            "exit_velocity": exit_velocity,
+                            "hip_speed": peak_hip_speed,
+                            "report": report,
+                            "video_bytes": video_bytes,
+                        })
 
+                        # 3. 延長冷卻時間至 2 秒 (fps * 2.0)，防止收棒與回到準備姿勢時二次觸發
+                        cooldown_counter = int(fps * 2.0)
+
+                    # 重置揮棒狀態
                     swing_state = 0
                     current_swing_trajectory = []
-                    cooldown_counter = int(fps * 0.8)
 
             if frame_idx % 3 == 0:
                 st_frame.image(
@@ -674,21 +687,3 @@ if st.session_state.get("is_analyzed", False):
         )
 
         with tab1:
-            st.markdown(
-                f"### 🏆 揮棒綜合評分：`{report['score']} 分` (等級: {report['grade']})"
-            )
-
-            st.subheader("📊 4 大核心數據與動力鏈標竿對比")
-            st.dataframe(report["summary_df"], use_container_width=True)
-
-            st.subheader("💡 動作修正與導引診斷")
-            for fb in report["feedbacks"]:
-                st.write(f"- {fb}")
-
-            if report["drills"]:
-                st.subheader("🎯 針對性動作修正處方 (Recommended Drills)")
-                for drill in report["drills"]:
-                    st.info(f"👉 **建議訓練：** {drill}")
-
-        with tab2:
-            st.video(event["video_bytes"], format="video/webm")
