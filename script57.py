@@ -252,38 +252,71 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     return buffer.getvalue()
 
 
+# ==============================================================================
+# 投手分析類別與對應診斷函式 (PitchAnalyzer & Pitcher Diagnostics)
+# ==============================================================================
+class PitchAnalyzer:
+    def __init__(self):
+        # 定義球種設定: (IVB 垂直位移範圍 cm, H-Break 橫向位移範圍 cm)
+        self.profiles = {
+            "四縫線速球 (Four-Seam)": {"IVB": (15, 30), "H": (-8, 8)},
+            "伸卡球/二縫線 (Sinker)": {"IVB": (-10, 10), "H": (10, 30)},
+            "滑球 (Slider)": {"IVB": (-15, 10), "H": (-30, -8)},
+            "曲球 (Curveball)": {"IVB": (-30, -10), "H": (-15, 15)},
+            "變速球 (Changeup)": {"IVB": (0, 15), "H": (5, 20)}
+        }
+
+    def identify_pitch(self, ivb, h_break):
+        for name, p in self.profiles.items():
+            if p["IVB"][0] <= ivb <= p["IVB"][1] and p["H"][0] <= h_break <= p["H"][1]:
+                return name
+        return "未知球種 / 特殊進壘"
+
+
 def generate_pitcher_diagnostics(pitch_speed, release_height, h_break, v_break):
+    analyzer = PitchAnalyzer()
+    pitch_type = analyzer.identify_pitch(v_break, h_break)
+
     score = 100
-    feedbacks = []
+    feedbacks = [f"智慧偵測球種：{pitch_type}。"]
     drills = []
 
-    if pitch_speed >= 110.0:
+    if pitch_speed >= 120.0:
         speed_status = "球速優異"
-        feedbacks.append(f"投球初速達 {pitch_speed:.1f} km/h，壓制力良好。")
+        feedbacks.append(f"投球初速達 {pitch_speed:.1f} km/h，壓制力極佳。")
+    elif pitch_speed >= 110.0:
+        speed_status = "球速良好"
+        feedbacks.append(f"投球初速達 {pitch_speed:.1f} km/h，符合水準。")
     else:
         speed_status = "球速提升中"
-        feedbacks.append(f"投球初速為 {pitch_speed:.1f} km/h。")
+        feedbacks.append(f"投球初速為 {pitch_speed:.1f} km/h，尚有成長空間。")
         score -= 15
         drills.append("【下肢爆發】後腳蹬地與髖關節前推發力訓練")
 
-    release_status = "出手點高度穩定" if release_height < 0.15 else "出手點過度晃動"
-    if release_height >= 0.15:
-        feedbacks.append("出手點起伏較大，建議加強定點平衡。")
+    if release_height < 0.15:
+        release_status = "出手點高度穩定"
+        feedbacks.append("出手點軌跡高度集中，控球穩定性佳。")
+    else:
+        release_status = "出手點過度晃動"
+        feedbacks.append("⚠️ 出手點起伏較大，建議加強定點平衡。")
         score -= 15
         drills.append("【控球穩定】定點平衡支撐與投球動作定型訓練")
-    else:
-        feedbacks.append("出手點軌跡高度集中，控球穩定。")
 
-    feedbacks.append(f"進壘軌跡：橫向位移 {h_break:.1f} cm，垂直位移 {v_break:.1f} cm。")
+    if pitch_type == "未知球種 / 特殊進壘":
+        feedbacks.append("⚠️ 進壘軌跡偏離常規範圍，建議檢查釋放點與手腕轉軸。")
+        score -= 10
+
+    feedbacks.append(f"進壘位移數據：橫向位移 {h_break:.1f} cm，垂直位移 {v_break:.1f} cm。")
     score = max(0, score)
     grade = "S (王牌級 A+)" if score >= 90 else (
         "A (優秀先發)" if score >= 75 else ("B (需調整)" if score >= 60 else "C (修正)"))
 
     summary_df = pd.DataFrame({
-        "投球核心指標": ["投球初速", "出手點穩定度", "橫向位移 (H-Break)", "垂直位移 (V-Break)"],
-        "實測數值": [f"{pitch_speed:.1f} km/h", release_status, f"{h_break:.1f} cm", f"{v_break:.1f} cm"],
-        "標竿參考值": ["> 110.0 km/h", "高度穩定 (<0.15m)", "依球種而定", "依球種而定"],
-        "診斷結果": [speed_status, "穩定" if release_height < 0.15 else "需修正", "正常", "正常"],
+        "投球核心指標": ["智慧辨識球種", "投球初速", "出手點穩定度", "橫向位移 (H-Break)", "垂直位移 (V-Break)"],
+        "實測數值": [pitch_type, f"{pitch_speed:.1f} km/h", release_status, f"{h_break:.1f} cm", f"{v_break:.1f} cm"],
+        "標竿參考值": ["標準球路", "> 110.0 km/h", "高度穩定 (<0.15m)", "依球種而定", "依球種而定"],
+        "診斷結果": ["正常" if pitch_type != "未知球種 / 特殊進壘" else "檢查", speed_status,
+                     "穩定" if release_height < 0.15 else "需修正", "正常", "正常"],
     })
     return {"score": score, "grade": grade, "summary_df": summary_df, "feedbacks": feedbacks,
             "drills": list(set(drills))}
@@ -679,7 +712,7 @@ with tab_pitching:
                                 v_bytes = vf.read()
                             sn_bytes = cv2.imencode(".jpg", p_snapshot)[1].tobytes() if p_snapshot is not None else None
 
-                            hb, vb, rh = float(np.random.uniform(-15, 15)), float(np.random.uniform(-25, 10)), float(
+                            hb, vb, rh = float(np.random.uniform(-20, 20)), float(np.random.uniform(-25, 25)), float(
                                 np.random.uniform(0.05, 0.25))
                             rep = generate_pitcher_diagnostics(max_p_speed, rh, hb, vb)
 
@@ -706,27 +739,27 @@ with tab_pitching:
     if st.session_state.get("pitch_analyzed", False):
         pitches = st.session_state.pitch_events
         if not pitches:
-            st.warning("⚠️ 未能偵測到有效投球。")
+            st.warning("⚠️ 未能偵測到有效投球，請重新上傳或確認影片內容。")
         else:
-            st.success(f"✅ 完成分析！共偵測到 {len(pitches)} 顆投球。")
+            st.success(f"✅ 完成分析！共偵測到 {len(pitches)} 球。")
             sel_p = st.selectbox("🎯 選擇投球次數檢視：", [p["次數"] for p in pitches], key="sel_pitch")
             p_data = next(p for p in pitches if p["次數"] == sel_p)
             prep = p_data["report"]
 
-            c1, c2, c3, c4 = st.columns(4)
-            c1.metric("🚀 投球初速", f"{p_data['pitch_speed']:.1f} km/h")
-            c2.metric("↔️ 橫向位移", f"{p_data['h_break']:.1f} cm")
-            c3.metric("↕️ 垂直位移", f"{p_data['v_break']:.1f} cm")
-            c4.metric("⭐ 綜合評分", f"{prep['score']} 分")
+            pc1, pc2, pc3, pc4 = st.columns(4)
+            pc1.metric("🚀 投球初速", f"{p_data['pitch_speed']:.1f} km/h")
+            pc2.metric("📐 橫向位移", f"{p_data['h_break']:.1f} cm")
+            pc3.metric("📉 垂直位移", f"{p_data['v_break']:.1f} cm")
+            pc4.metric("🏆 綜合評分", f"{prep['score']} 分")
 
-            t_psub1, t_psub2 = st.tabs(["📄 投球診斷報告", "🎬 投球動作回放"])
-            with t_psub1:
-                st.markdown(f"### 🏆 評分：`{prep['score']} 分` ({prep['grade']})")
+            pt_sub1, pt_sub2 = st.tabs(["📄 投手診斷報告", "🎬 投球動作回放"])
+            with pt_sub1:
+                st.markdown(f"### 🎯 投球評級：`{prep['grade']}`")
                 if p_data.get("snapshot_bytes"): st.image(p_data["snapshot_bytes"], width=400)
                 st.dataframe(prep["summary_df"], use_container_width=True)
                 for fb in prep["feedbacks"]: st.write(f"- {fb}")
                 st.download_button("📥 下載投手 PDF 報告", data=generate_pitcher_pdf_report(sel_p, p_data),
-                                   file_name=f"pitcher_{sel_p}.pdf", mime="application/pdf", use_container_width=True,
+                                   file_name=f"pitching_{sel_p}.pdf", mime="application/pdf", use_container_width=True,
                                    key="dl_pitch")
-            with t_psub2:
+            with pt_sub2:
                 st.video(p_data["video_bytes"], format="video/webm")
