@@ -89,7 +89,7 @@ with st.sidebar:
     )
 
     st.subheader("揮棒偵測門檻")
-    min_peak_speed = st.slider("⚡ 最低初速門檻 (km/h)", 10.0, 50.0, 15.0, 1.0)
+    min_peak_speed = st.slider("⚡ 最低初速門檻 (km/h)", 10.0, 50.0, 12.0, 1.0)
     min_total_travel = st.slider("📏 最低手腕位移 (PX)", 10, 100, 20, 5)
 
     bat_length_px = 110
@@ -116,12 +116,12 @@ def calculate_attack_angle_and_length(
 
     pts = np.array(bat_trajectory, dtype=np.float64)
 
-    # 1. 計算累積揮棒軌跡長度 (Swing Length: 球棒從啟動到擊球點移動距離)
+    # 1. 計算累積揮棒軌跡長度
     diffs = np.diff(pts, axis=0)
     dist_px = np.sum(np.sqrt(np.sum(diffs**2, axis=1)))
     swing_length_m = dist_px * m_per_px
 
-    # 2. 擊球前攻擊仰角擬合 (迎向擊球區之垂直傾斜角度)
+    # 2. 擊球前攻擊仰角擬合
     x = pts[:, 0]
     y_phys = -pts[:, 1]  # Y軸轉為物理向上為正
 
@@ -152,12 +152,12 @@ def generate_advanced_diagnostics(
     hip_rot_speed: float,
     r_squared: float,
 ) -> dict:
-    """整合 4 大指標（揮棒速度、軌跡長度、攻擊仰角、擊球初速）與下半身轉動動力鏈之自動化報告引擎"""
+    """整合 4 大指標與下半身轉動動力鏈之自動化報告引擎"""
     score = 100
     feedbacks = []
     drills = []
 
-    # 1. 揮棒速度 (Bat Speed)
+    # 1. 揮棒速度
     if bat_speed >= 28.0:
         bat_speed_status = "✅ 爆發力佳"
         feedbacks.append(
@@ -170,7 +170,7 @@ def generate_advanced_diagnostics(
         )
         score -= 10
 
-    # 2. 揮棒軌跡長度 (Swing Length) 與軌跡改善
+    # 2. 揮棒軌跡長度
     if 0.65 <= swing_length <= 0.95:
         length_status = "✅ 軌跡簡潔敏捷"
         feedbacks.append(
@@ -189,7 +189,7 @@ def generate_advanced_diagnostics(
             f"**揮棒軌跡長度 (Swing Length)** 僅 **{swing_length:.2f} m**，推棒成份較多，影響擊球後段延伸與力量貫穿。"
         )
 
-    # 3. 攻擊仰角 (Attack Angle) 與軌跡修正
+    # 3. 攻擊仰角
     if 6.0 <= attack_angle <= 18.0:
         attack_status = "✅ 完美切入 (微向上揚)"
         feedbacks.append(
@@ -210,7 +210,7 @@ def generate_advanced_diagnostics(
         score -= 15
         drills.append("【改善軌跡】水平平飛擊球修正 (Level Swing Progression)")
 
-    # 4. 擊球初速 (Exit Velocity)
+    # 4. 擊球初速
     if exit_velocity >= 25.0:
         exit_status = "✅ 力量扎實轉化"
         feedbacks.append(
@@ -223,7 +223,7 @@ def generate_advanced_diagnostics(
         )
         score -= 10
 
-    # 5. 動作修正重點：強化轉動與動力鏈 (Hip Rotation Speed)
+    # 5. 髖關節轉速
     if hip_rot_speed >= 280.0:
         hip_status = "✅ 骨盆轉動爆發力強"
         feedbacks.append(
@@ -452,7 +452,7 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                     history_wrist.append((frame_idx, wrist[0], wrist[1]))
                     history_hip_angles.append((frame_idx, hip_angle))
 
-            # 計算即時揮棒速度 (km/h)
+            # 計算即時揮棒速度 (使用 3 幀滑動平均，減少座標抖動帶來的噪訊)
             current_speed = 0.0
             if len(history_wrist) >= 2:
                 p1, p2 = history_wrist[-2], history_wrist[-1]
@@ -463,9 +463,18 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                 )
                 dx = (p2[1] - p1[1]) * meters_per_pixel
                 dy = (p2[2] - p1[2]) * meters_per_pixel
-                current_speed = (
+                inst_speed = (
                     math.sqrt(dx**2 + dy**2) / dt
                 ) * 3.6 * bat_speed_factor
+
+                # 平滑化速度
+                if len(swing_frames_data) > 0:
+                    prev_speeds = [
+                        item["speed"] for item in swing_frames_data[-2:]
+                    ]
+                    current_speed = np.mean(prev_speeds + [inst_speed])
+                else:
+                    current_speed = inst_speed
 
             # 計算髖關節角速度 (deg/s)
             current_hip_speed = 0.0
@@ -480,9 +489,10 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                 current_hip_speed = d_ang / dt_h
 
             # ==============================================================================
-            # 【修復誤判】優化後的揮棒偵測與狀態機邏輯
+            # 【修復誤判與遺漏】動態優化揮棒偵測 logic
             # ==============================================================================
-            start_trigger_speed = max(min_peak_speed * 0.60, 10.0)
+            # 適度降低啟動觸發門檻 (40% 最低門檻)，保證能正常被啟動
+            start_trigger_speed = max(min_peak_speed * 0.40, 6.0)
 
             if cooldown_counter > 0:
                 cooldown_counter -= 1
@@ -513,9 +523,10 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                         max_speed_in_swing = current_speed
                         peak_frame_in_swing = frame_idx
 
+                    # 速度開始明顯衰減時進入減速狀態
                     if (
-                        max_speed_in_swing >= min_peak_speed
-                        and current_speed < max_speed_in_swing * 0.5
+                        max_speed_in_swing >= (min_peak_speed * 0.7)
+                        and current_speed < max_speed_in_swing * 0.6
                     ):
                         swing_state = 2
 
@@ -531,9 +542,10 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                         "hip_speed": current_hip_speed,
                     })
 
+                    # 速度降至低點或超過最高幀數準備結算
                     if (
-                        current_speed <= start_trigger_speed * 0.5
-                        or len(swing_frames_data) > 40
+                        current_speed <= start_trigger_speed
+                        or len(swing_frames_data) > 45
                     ):
                         swing_state = 3
 
@@ -550,9 +562,24 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
 
                 # 結算揮棒並產出分析數據
                 if swing_state == 3:
+                    # 計算揮棒過程中手腕累積總位移
+                    wrists_in_swing = [
+                        item["wrist"]
+                        for item in swing_frames_data
+                        if item["wrist"] is not None
+                    ]
+                    total_wrist_travel = 0.0
+                    if len(wrists_in_swing) >= 2:
+                        w_pts = np.array(wrists_in_swing)
+                        total_wrist_travel = np.sum(
+                            np.sqrt(np.sum(np.diff(w_pts, axis=0) ** 2, axis=1))
+                        )
+
+                    # 關鍵過濾條件：最大速度達標、幀數適當、且手腕發生真實移動
                     if (
-                        max_speed_in_swing >= min_peak_speed
-                        and len(swing_frames_data) >= 8
+                        max_speed_in_swing >= (min_peak_speed * 0.8)
+                        and len(swing_frames_data) >= 5
+                        and total_wrist_travel >= min_total_travel
                     ):
                         fit_pts = [
                             item["bat_head"]
@@ -615,8 +642,10 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                             "video_bytes": video_bytes,
                         })
 
-                        cooldown_counter = int(fps * 2.0)
+                        # 冷卻時間設為 1.8 秒，足以防止收棒過程被當成第二次揮棒
+                        cooldown_counter = int(fps * 1.8)
 
+                    # 重置狀態機
                     swing_state = 0
                     current_swing_trajectory = []
 
@@ -641,7 +670,7 @@ if st.session_state.get("is_analyzed", False):
     events = st.session_state.swing_events
 
     if not events:
-        st.warning("⚠️ 未能偵測到有效揮棒，請調整邊欄門檻。")
+        st.warning("⚠️ 未能偵測到有效揮棒，請調整側邊欄門檻（如調低「最低初速門檻」或「手腕位移」）。")
     else:
         st.success(f"✅ 完成分析！共偵測到 {len(events)} 次揮棒。")
 
