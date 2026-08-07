@@ -30,7 +30,7 @@ from reportlab.platypus import (
 # 0. 頁面設定與模型載入
 # ==============================================================================
 st.set_page_config(
-    page_title="⚾ 棒球高階揮擊診斷與動力鏈分析系統",
+    page_title="⚾ 崇明國中-棒球高階揮擊診斷與動力鏈分析系統",
     page_icon="⚾",
     layout="wide",
 )
@@ -48,7 +48,7 @@ def ensure_model_file():
 
 ensure_model_file()
 
-st.title("⚾ 棒球高階揮擊診斷與動力鏈分析系統")
+st.title("⚾ 崇明國中-棒球高階揮擊診斷與動力鏈分析系統")
 st.caption(
     "整合 4 大核心指標（揮棒速度、揮棒軌跡長度、攻擊仰角、擊球初速）與下半身髖關節旋轉動力鏈診斷"
 )
