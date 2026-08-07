@@ -34,7 +34,7 @@ ensure_model_file()
 
 st.title("⚾ 棒球高階揮擊診斷與動力鏈分析系統")
 st.caption(
-    "整合 4 大核心參考數據（揮棒速度、軌跡長度、攻擊仰角、擊球初速）與下半身骨盆轉動動力鏈診斷"
+    "整合 4 大核心參考數據與下半身骨盆轉動診斷（含畫面角度與姿態繪製）"
 )
 
 # ==============================================================================
@@ -72,7 +72,6 @@ with st.sidebar:
 
     st.subheader("揮棒偵測門檻")
     min_peak_speed = st.slider("⚡ 最低初速門檻 (km/h)", 10.0, 50.0, 15.0, 1.0)
-    min_total_travel = st.slider("📏 最低手腕位移 (PX)", 10, 100, 20, 5)
 
     bat_length_px = 110
     target_width = 800
@@ -98,14 +97,14 @@ def calculate_attack_angle_and_length(
 
     pts = np.array(bat_trajectory, dtype=np.float64)
 
-    # 1. 揮棒軌跡長度 (Swing Length)：從啟動到擊球點移點的累積實體距離 (公尺)
+    # 1. 揮棒軌跡長度 (Swing Length)
     diffs = np.diff(pts, axis=0)
     dist_px = np.sum(np.sqrt(np.sum(diffs**2, axis=1)))
     swing_length_m = dist_px * m_per_px
 
-    # 2. 攻擊仰角 (Attack Angle)：球棒迎向擊球區的傾斜角度
+    # 2. 攻擊仰角 (Attack Angle)
     x = pts[:, 0]
-    y_phys = -pts[:, 1]  # 轉為物理座標 (向上為正)
+    y_phys = -pts[:, 1]  # 轉為物理向上為正
 
     x_dir = 1.0 if x[-1] >= x[0] else -1.0
     x_rel = (x - x[0]) * x_dir
@@ -139,7 +138,7 @@ def generate_advanced_diagnostics(
     feedbacks = []
     drills = []
 
-    # 1. 揮棒速度 (Bat Speed) 診斷
+    # 1. 揮棒速度 (Bat Speed)
     if bat_speed >= 28.0:
         bat_speed_status = "✅ 爆發力佳"
         feedbacks.append(
@@ -152,7 +151,7 @@ def generate_advanced_diagnostics(
         )
         score -= 10
 
-    # 2. 揮棒軌跡長度 (Swing Length) 診斷 (修正方向：改善軌跡)
+    # 2. 揮棒軌跡長度 (Swing Length)
     if 0.65 <= swing_length <= 0.95:
         length_status = "✅ 軌跡緊湊敏捷"
         feedbacks.append(
@@ -171,7 +170,7 @@ def generate_advanced_diagnostics(
             f"揮棒軌跡僅 **{swing_length:.2f} m**，手臂過早收縮，影響擊球後段貫穿力與延伸。"
         )
 
-    # 3. 攻擊仰角 (Attack Angle) 診斷 (修正方向：改善軌跡)
+    # 3. 攻擊仰角 (Attack Angle)
     if 6.0 <= attack_angle <= 18.0:
         attack_status = "✅ 完美迎球切入"
         feedbacks.append(
@@ -192,7 +191,7 @@ def generate_advanced_diagnostics(
         score -= 15
         drills.append("水平平飛擊球修正 (Level Swing Progression)")
 
-    # 4. 擊球初速 (Exit Velocity) 診斷
+    # 4. 擊球初速 (Exit Velocity)
     if exit_velocity >= 25.0:
         exit_status = "✅ 力量扎實轉化"
         feedbacks.append(
@@ -205,7 +204,7 @@ def generate_advanced_diagnostics(
         )
         score -= 10
 
-    # 5. 動力鏈與轉动強化診斷 (修正方向：強化後髖關節與骨盆旋轉)
+    # 5. 動力鏈與轉動強化診斷
     if hip_rot_speed >= 280.0:
         hip_status = "✅ 骨盆轉動爆發力強"
         feedbacks.append(
@@ -274,16 +273,16 @@ def generate_advanced_diagnostics(
     }
 
 
-def process_frame_landmarks(
+def draw_detection_annotations(
     frame: np.ndarray,
     pose_landmarks,
     width: int,
     height: int,
     bat_length: int,
 ):
-    """擷取關節座標、計算髖關節連線角度與手腕/棒頭位置"""
+    """於畫面上實體繪製肩線、髖關節角度線、棒頭向量與角度數值"""
     if not pose_landmarks:
-        return None, None, None
+        return None, None, 0.0
 
     landmarks = pose_landmarks[0]
 
@@ -300,12 +299,37 @@ def process_frame_landmarks(
     l_wrist = get_coords(15)
     r_wrist = get_coords(16)
 
-    # 繪製肩線與骨盆旋轉基準線
+    # 1. 繪製肩膀連線 (白色)
     if l_shoulder and r_shoulder:
         cv2.line(frame, l_shoulder, r_shoulder, (255, 255, 255), 2)
+        cv2.circle(frame, l_shoulder, 4, (255, 255, 255), -1)
+        cv2.circle(frame, r_shoulder, 4, (255, 255, 255), -1)
+
+    # 2. 繪製骨盆/髖關節旋轉連線 (洋紅色) 與角度標示
+    hip_angle = 0.0
     if l_hip and r_hip:
         cv2.line(frame, l_hip, r_hip, (255, 0, 255), 3)
+        cv2.circle(frame, l_hip, 5, (255, 0, 255), -1)
+        cv2.circle(frame, r_hip, 5, (255, 0, 255), -1)
 
+        dx_h = r_hip[0] - l_hip[0]
+        dy_h = r_hip[1] - l_hip[1]
+        hip_angle = math.degrees(math.atan2(dy_h, dx_h))
+
+        # 標註髖關節角度文字
+        mid_hip = (int((l_hip[0] + r_hip[0]) / 2), int((l_hip[1] + r_hip[1]) / 2))
+        cv2.putText(
+            frame,
+            f"Hip: {abs(hip_angle):.1f}deg",
+            (mid_hip[0] - 40, mid_hip[1] + 25),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.5,
+            (255, 0, 255),
+            2,
+            cv2.LINE_AA,
+        )
+
+    # 3. 手腕中心與棒頭向量繪製
     wrist_center = None
     if l_wrist and r_wrist:
         wrist_center = (
@@ -328,21 +352,15 @@ def process_frame_landmarks(
                 int(wrist_center[0] + (dx / norm) * bat_length),
                 int(wrist_center[1] + (dy / norm) * bat_length),
             )
+            # 繪製球棒本體 (橘色) 與棒頭 (黃色)
             cv2.line(frame, wrist_center, bat_head, (0, 165, 255), 4)
-            cv2.circle(frame, bat_head, 5, (0, 255, 255), -1)
-
-    # 計算髖關節角度
-    hip_angle = 0.0
-    if l_hip and r_hip:
-        dx_h = r_hip[0] - l_hip[0]
-        dy_h = r_hip[1] - l_hip[1]
-        hip_angle = math.degrees(math.atan2(dy_h, dx_h))
+            cv2.circle(frame, bat_head, 6, (0, 255, 255), -1)
 
     return wrist_center, bat_head, hip_angle
 
 
 # ==============================================================================
-# 3. 影片分析與偵測主程式
+# 3. 影片分析與視訊畫面檢測線條繪製主程序
 # ==============================================================================
 uploaded_file = st.file_uploader(
     "📁 請上傳揮棒側拍影片 (MP4 / MOV / AVI)", type=["mp4", "avi", "mov", "m4v"]
@@ -367,7 +385,7 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
     proc_width = int(orig_width * scale)
     proc_height = int(orig_height * scale)
 
-    st.markdown("### 📹 全程 4 大數據與動力鏈旋轉姿態分析中...")
+    st.markdown("### 📹 全程 4 大數據與檢測線條繪製分析中...")
     st_frame = st.empty()
     progress_bar = st.progress(0)
 
@@ -419,8 +437,9 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
             current_bat_head = None
             current_hip_angle = 0.0
 
+            # 繪製姿態骨架與檢測線條
             if result.pose_landmarks:
-                wrist, bat_head, hip_angle = process_frame_landmarks(
+                wrist, bat_head, hip_angle = draw_detection_annotations(
                     annotated_frame,
                     result.pose_landmarks,
                     proc_width,
@@ -434,7 +453,7 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                     history_wrist.append((frame_idx, wrist[0], wrist[1]))
                     history_hip_angles.append((frame_idx, hip_angle))
 
-            # 計算即時揮棒速度 (km/h)
+            # 計算即時速度
             current_speed = 0.0
             if len(history_wrist) >= 2:
                 p1, p2 = history_wrist[-2], history_wrist[-1]
@@ -449,7 +468,6 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                     math.sqrt(dx**2 + dy**2) / dt
                 ) * 3.6 * bat_speed_factor
 
-            # 計算髖關節角速度 (deg/s)
             current_hip_speed = 0.0
             if len(history_hip_angles) >= 2:
                 h1, h2 = history_hip_angles[-2], history_hip_angles[-1]
@@ -476,7 +494,7 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                         max_speed_in_swing = current_speed
                         peak_frame_in_swing = frame_idx
 
-                elif swing_state == 1:
+                elif swing_state in [1, 2]:
                     if current_bat_head:
                         current_swing_trajectory.append(current_bat_head)
 
@@ -493,29 +511,22 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                         peak_frame_in_swing = frame_idx
 
                     if (
-                        max_speed_in_swing >= min_peak_speed
+                        swing_state == 1
+                        and max_speed_in_swing >= min_peak_speed
                         and current_speed < max_speed_in_swing * 0.6
                     ):
                         swing_state = 2
 
-                elif swing_state == 2:
-                    if current_bat_head:
-                        current_swing_trajectory.append(current_bat_head)
-
-                    swing_frames_data.append({
-                        "frame": frame_idx,
-                        "wrist": current_wrist,
-                        "bat_head": current_bat_head,
-                        "speed": current_speed,
-                        "hip_speed": current_hip_speed,
-                    })
-
                     if (
-                        current_speed <= start_trigger_speed * 0.8
-                        or len(swing_frames_data) > 35
+                        swing_state == 2
+                        and (
+                            current_speed <= start_trigger_speed * 0.8
+                            or len(swing_frames_data) > 35
+                        )
                     ):
                         swing_state = 3
 
+                # 繪製揮棒黃色軌跡連續線
                 if len(current_swing_trajectory) > 1:
                     pts = np.array(
                         current_swing_trajectory, np.int32
@@ -524,10 +535,35 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                         annotated_frame, [pts], False, (0, 255, 255), 3
                     )
 
+                # 畫面 OSD 即時數據儀表板 overlay
+                cv2.rectangle(
+                    annotated_frame, (10, 10), (280, 85), (0, 0, 0), -1
+                )
+                cv2.putText(
+                    annotated_frame,
+                    f"Bat Speed: {current_speed:.1f} km/h",
+                    (20, 35),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (0, 255, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+                cv2.putText(
+                    annotated_frame,
+                    f"Hip Rot: {current_hip_speed:.0f} deg/s",
+                    (20, 65),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.6,
+                    (255, 0, 255),
+                    2,
+                    cv2.LINE_AA,
+                )
+
                 if swing_state in [1, 2]:
                     swing_raw_frames.append(annotated_frame.copy())
 
-                # 結算揮棒並進行數據診斷
+                # 結算揮棒並產出分析數據
                 if swing_state == 3:
                     fit_pts = [
                         item["bat_head"]
@@ -544,7 +580,7 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                     )
 
                     bat_speed = max_speed_in_swing
-                    exit_velocity = bat_speed * 1.15  # 依動能轉化換算預估初速
+                    exit_velocity = bat_speed * 1.15
                     peak_hip_speed = max(
                         [item["hip_speed"] for item in swing_frames_data]
                         + [0.0]
@@ -625,7 +661,6 @@ if st.session_state.get("is_analyzed", False):
         report = event["report"]
 
         st.markdown("---")
-        # 顯示 4 大核心數據
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("🚀 揮棒速度 (Bat Speed)", f"{event['bat_speed']:.1f} km/h")
         c2.metric(
@@ -639,7 +674,7 @@ if st.session_state.get("is_analyzed", False):
         )
 
         tab1, tab2 = st.tabs(
-            ["📄 揮擊診斷與動作修正報告", "🎬 慢動作姿態回放"]
+            ["📄 揮擊診斷與動作修正報告", "🎬 慢動作姿態回放（含檢測線條）"]
         )
 
         with tab1:
