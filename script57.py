@@ -14,7 +14,7 @@ from mediapipe.tasks.python import vision
 # 0. 頁面設定與 MediaPipe 模型自動下載機制
 # ==============================================================================
 st.set_page_config(
-    page_title="棒球揮棒動作姿態與初速分析系統",
+    page_title="崇明國中-棒球揮棒動作姿態與初速分析系統",
     page_icon="⚾",
     layout="wide",
 )
@@ -33,21 +33,67 @@ def ensure_model_file():
 
 ensure_model_file()
 
-# 系統與演算預設參數
-meters_per_pixel = 0.0025  # 像素轉公尺比例
-bat_speed_factor = 1.35  # 手腕轉棒頭速度放大係數
-min_peak_speed = 30.0  # 判定為有效揮棒的最低峰值速度 (km/h)
-min_x_travel = 40  # 手腕最低 X 軸位移量 (px)
-bat_length_px = 110  # 棒頭延伸像素長度
-frame_skip_step = 1  # 逐幀分析
-target_width = 800  # 圖像縮放最大寬度
+st.title("⚾ 棒球揮棒動作姿態與初速分析系統")
+st.caption(
+    "基於 MediaPipe Pose Landmarker 之 AI 骨架偵測、靈敏度可調與慢動作回放"
+)
 
-st.title("⚾ 棒球揮棒動作姿態與初速分析系統 (含水平基準線校正)")
-st.caption("基於 MediaPipe Pose Landmarker 之 AI 骨架偵測、角度地平線校正與慢動作回放")
+# ==============================================================================
+# 1. 側邊欄：動態參數調控 (解決初速不足與偵測不到的問題)
+# ==============================================================================
+with st.sidebar:
+    st.header("⚙️ 偵測靈敏度與距離校正")
+
+    st.subheader("1. 距離與比例校正")
+    meters_per_pixel = st.slider(
+        "📐 1 像素代表公尺數 (Meters/PX)",
+        min_value=0.0010,
+        max_value=0.0080,
+        value=0.0032,
+        step=0.0002,
+        help="如果影片拍得很遠（人很小），請調大此數值（例如 0.004~0.005）；如果拍得很近，請調小。",
+    )
+
+    bat_speed_factor = st.slider(
+        "🚀 手腕轉棒頭速度放大係數",
+        min_value=1.0,
+        max_value=2.0,
+        value=1.35,
+        step=0.05,
+    )
+
+    st.subheader("2. 揮棒判定門檻")
+    min_peak_speed = st.slider(
+        "⚡ 最低有效峰值初速 (km/h)",
+        min_value=10.0,
+        max_value=50.0,
+        value=15.0,
+        step=2.0,
+        help="低於此速度的動作不會被紀錄。如常漏抓，請將此數值調低（如 12~15 km/h）。",
+    )
+
+    min_total_travel = st.slider(
+        "📏 最低手腕總位移量 (像素)",
+        min_value=10,
+        max_value=100,
+        value=25,
+        step=5,
+        help="手腕移動距離需超過此像素才會結算為一次揮棒。",
+    )
+
+    st.markdown("---")
+    bat_length_px = 110  # 棒頭延伸像素長度
+    frame_skip_step = 1  # 逐幀分析
+    target_width = 800  # 圖像縮放最大寬度
+
+    if st.button("🔄 重置並重新分析", use_container_width=True):
+        st.session_state.is_analyzed = False
+        st.session_state.swing_events = []
+        st.rerun()
 
 
 # ==============================================================================
-# 1. 輔助運算、水平線繪製與仰角校正函式
+# 2. 輔助運算、水平線繪製與仰角校正函式
 # ==============================================================================
 def calculate_horizon_angle(landmarks, width, height):
     """利用肩膀或腳踝連線估算相機傾斜角度 (地平線角度)"""
@@ -65,35 +111,26 @@ def calculate_horizon_angle(landmarks, width, height):
     ):
         dx = (r_shoulder.x - l_shoulder.x) * width
         dy = (r_shoulder.y - l_shoulder.y) * height
-        angle = math.degrees(math.atan2(dy, dx))
-        return angle
+        return math.degrees(math.atan2(dy, dx))
     return 0.0
 
 
 def draw_reference_lines(frame, wrist_pos, horizon_angle):
     """在畫面上繪製水平參考線與角度軸線"""
-    h, w, _ = frame.shape
-
-    # 1. 繪製橫跨畫面的地平參考線 (綠色線)
     if wrist_pos:
         cx, cy = wrist_pos
-        # 繪製穿過手腕位置的水平地平線
         rad = math.radians(horizon_angle)
         dx = int(500 * math.cos(rad))
         dy = int(500 * math.sin(rad))
 
         p1 = (cx - dx, cy - dy)
         p2 = (cx + dx, cy + dy)
-
-        # 畫水平基準虛線/實線 (藍綠色)
         cv2.line(frame, p1, p2, (255, 255, 0), 1, cv2.LINE_AA)
 
-        # 畫鉛直參考線 (紫色)
         p3 = (cx + dy, cy - dx)
         p4 = (cx - dy, cy + dx)
         cv2.line(frame, p3, p4, (255, 0, 255), 1, cv2.LINE_AA)
 
-        # 標示地平線與垂直線文字
         cv2.putText(
             frame,
             "0 deg (Horizon)",
@@ -123,7 +160,6 @@ def process_frame(frame, pose_landmarks, width, height, bat_length):
     l_wrist = get_coords(15)
     r_wrist = get_coords(16)
 
-    # 地平線傾斜度
     horizon_angle = calculate_horizon_angle(landmarks, width, height)
 
     if l_shoulder and r_shoulder:
@@ -158,7 +194,6 @@ def process_frame(frame, pose_landmarks, width, height, bat_length):
             cv2.line(frame, wrist_center, bat_head, (0, 165, 255), 4)
             cv2.circle(frame, bat_head, 5, (0, 255, 255), -1)
 
-    # 繪製地平與垂直參考線
     if wrist_center:
         draw_reference_lines(frame, wrist_center, horizon_angle)
 
@@ -181,7 +216,7 @@ def save_swing_clip(frames, fps, width, height, output_path):
 
 
 # ==============================================================================
-# 2. Session 狀態初始化與上傳元件
+# 3. Session 狀態初始化與上傳元件
 # ==============================================================================
 if "swing_events" not in st.session_state:
     st.session_state.swing_events = []
@@ -201,15 +236,8 @@ if uploaded_file is not None:
         st.session_state.swing_events = []
         st.session_state.is_analyzed = False
 
-with st.sidebar:
-    st.header("⚙️ 控制選項")
-    if st.button("🔄 清除並重新分析", use_container_width=True):
-        st.session_state.is_analyzed = False
-        st.session_state.swing_events = []
-        st.rerun()
-
 # ==============================================================================
-# 3. 核心運算區
+# 4. 核心運算區
 # ==============================================================================
 if uploaded_file is not None and not st.session_state.is_analyzed:
     tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
@@ -230,7 +258,7 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
         proc_width = orig_width
         proc_height = orig_height
 
-    st.markdown("### 📹 全程動態分析與基準線繪製中...")
+    st.markdown("### 📹 全程動態分析中...")
     st_frame = st.empty()
     progress_bar = st.progress(0)
 
@@ -268,9 +296,6 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
             if frame_idx % 10 == 0:
                 progress_bar.progress(min(frame_idx / total_frames, 1.0))
 
-            if frame_skip_step > 1 and (frame_idx % frame_skip_step != 0):
-                continue
-
             if scale != 1.0:
                 frame_resized = cv2.resize(
                     frame, (proc_width, proc_height), interpolation=cv2.INTER_AREA
@@ -306,6 +331,7 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
                     current_bat_head = bat_head
                     history_wrist.append((frame_idx, wrist[0], wrist[1]))
 
+            # 計算即時速度
             current_speed = 0.0
             if len(history_wrist) >= 2:
                 p1 = history_wrist[-2]
@@ -321,7 +347,8 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
             if cooldown_counter > 0:
                 cooldown_counter -= 1
 
-            start_trigger_speed = min_peak_speed * 0.4
+            # 起始觸發門檻為峰值門檻的 35%
+            start_trigger_speed = min_peak_speed * 0.35
 
             if cooldown_counter == 0:
                 if swing_state == 0:
@@ -357,7 +384,7 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
                     elif (
                         current_speed < start_trigger_speed
                         and max_speed_in_swing < min_peak_speed
-                        and len(swing_frames_data) > (15 // frame_skip_step)
+                        and len(swing_frames_data) > 12
                     ):
                         swing_state = 0
                         current_swing_trajectory = []
@@ -376,27 +403,35 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
 
                     if (
                         current_speed <= start_trigger_speed * 0.8
-                        or len(swing_frames_data) > (40 // frame_skip_step)
+                        or len(swing_frames_data) > 35
                     ):
+                        # 改為計算「總平面位移 (X + Y)」避免斜角度漏抓
                         x_coords = [
                             item["wrist"][0]
                             for item in swing_frames_data
                             if item["wrist"] is not None
                         ]
-                        total_x_displacement = (
-                            max(x_coords) - min(x_coords) if x_coords else 0
-                        )
+                        y_coords = [
+                            item["wrist"][1]
+                            for item in swing_frames_data
+                            if item["wrist"] is not None
+                        ]
 
-                        if total_x_displacement >= min_x_travel:
+                        total_displacement = 0
+                        if x_coords and y_coords:
+                            dx_total = max(x_coords) - min(x_coords)
+                            dy_total = max(y_coords) - min(y_coords)
+                            total_displacement = math.sqrt(
+                                dx_total**2 + dy_total**2
+                            )
+
+                        if total_displacement >= min_total_travel:
                             swing_state = 3
                         else:
                             swing_state = 0
                             current_swing_trajectory = []
-                            cooldown_counter = int(
-                                (fps * 0.3) // frame_skip_step
-                            )
+                            cooldown_counter = int(fps * 0.3)
 
-                # 繪製黃色軌跡
                 if len(current_swing_trajectory) > 1:
                     pts = np.array(
                         current_swing_trajectory, np.int32
@@ -417,7 +452,6 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
                         if item["frame"] == peak_frame_in_swing
                     ]
 
-                    # 角度計算：比較棒頭在峰值前後的軌跡向量 + 地平線校正
                     if peak_sub_idx:
                         p_idx = peak_sub_idx[0]
                         post_idx = min(len(swing_frames_data) - 1, p_idx + 2)
@@ -427,9 +461,7 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
 
                         if p_c and p_post:
                             dx_launch = p_post[0] - p_c[0]
-                            dy_launch = -(
-                                p_post[1] - p_c[1]
-                            )  # 轉換為標準笛卡爾 Y 軸 (向上為正)
+                            dy_launch = -(p_post[1] - p_c[1])
 
                             if (
                                 abs(dx_launch) > 0.0001
@@ -438,7 +470,6 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
                                 raw_angle = math.degrees(
                                     math.atan2(dy_launch, dx_launch)
                                 )
-                                # 扣除地平線傾斜角度
                                 launch_angle = raw_angle - h_angle
 
                     frame_logs = []
@@ -469,7 +500,7 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
                     )
                     actual_clip_path = save_swing_clip(
                         swing_raw_frames,
-                        fps / frame_skip_step,
+                        fps,
                         proc_width,
                         proc_height,
                         clip_filename,
@@ -482,7 +513,7 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
                         "次數": f"第 {swing_num} 次揮棒",
                         "初速": f"{max_speed_in_swing:.1f} km/h",
                         "仰角": f"{launch_angle:.1f}°",
-                        "耗時": f"{((len(swing_frames_data) * frame_skip_step) / fps):.2f} 秒",
+                        "耗時": f"{(len(swing_frames_data) / fps):.2f} 秒",
                         "total_frames": len(swing_frames_data),
                         "video_bytes": video_bytes,
                         "detailed_df": detailed_df,
@@ -490,9 +521,9 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
 
                     swing_state = 0
                     current_swing_trajectory = []
-                    cooldown_counter = int((fps * 0.8) // frame_skip_step)
+                    cooldown_counter = int(fps * 0.8)
 
-            if frame_idx % (frame_skip_step * 3) == 0:
+            if frame_idx % 3 == 0:
                 frame_display = cv2.cvtColor(
                     annotated_frame, cv2.COLOR_BGR2RGB
                 )
@@ -515,14 +546,17 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
     st.rerun()
 
 # ==============================================================================
-# 4. 揮棒結果展示區
+# 5. 揮棒結果展示區
 # ==============================================================================
 if st.session_state.is_analyzed:
     events = st.session_state.swing_events
 
     if not events:
         st.warning(
-            "⚠️ 影片分析完成，但未偵測到達到門檻的揮棒動作（初速 < 30 km/h 或位移不足）。"
+            "⚠️ 影片分析完成，但未偵測到揮棒動作。請嘗試在左側邊欄：\n"
+            "1. 將【最低有效峰值初速】調低（例如降至 12~15 km/h）\n"
+            "2. 將【1 像素代表公尺數】調大（例如調至 0.0040~0.0050）\n"
+            "3. 點擊【重置並重新分析】。"
         )
     else:
         st.success(f"✅ 分析完成！一共偵測出 {len(events)} 次有效揮棒。")
@@ -549,7 +583,7 @@ if st.session_state.is_analyzed:
         tab1, tab2 = st.tabs(["🎬 慢動作影片回放", "📊 該次揮棒獨立數據表"])
 
         with tab1:
-            st.markdown(f"#### 🎬 {selected_event['次數']} 慢動作回放 (含青藍色地平線)")
+            st.markdown(f"#### 🎬 {selected_event['次數']} 慢動作回放")
             st.video(selected_event["video_bytes"], format="video/webm")
 
         with tab2:
