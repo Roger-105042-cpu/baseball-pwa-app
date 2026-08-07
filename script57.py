@@ -16,9 +16,10 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.cidfonts import UnicodeCIDFont
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     HRFlowable,
+    Image as RLImage,
     Paragraph,
     SimpleDocTemplate,
     Spacer,
@@ -27,10 +28,10 @@ from reportlab.platypus import (
 )
 
 # ==============================================================================
-# 0. 頁面設定與模型載入
+# 0. 頁面設定與模型/字型下載
 # ==============================================================================
 st.set_page_config(
-    page_title="⚾ 崇明國中-棒球高階揮擊診斷與動力鏈分析系統",
+    page_title="⚾ 棒球高階揮擊診斷與動力鏈分析系統",
     page_icon="⚾",
     layout="wide",
 )
@@ -38,17 +39,27 @@ st.set_page_config(
 MODEL_PATH = "pose_landmarker_heavy.task"
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task"
 
+FONT_PATH = "NotoSansTC-Regular.ttf"
+FONT_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanstc/NotoSansTC-Regular.ttf"
+
 
 @st.cache_resource
-def ensure_model_file():
+def ensure_dependencies():
     if not os.path.exists(MODEL_PATH):
         with st.spinner("⏳ 首次執行，正在下載 MediaPipe 姿態識別模型..."):
             urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
 
+    if not os.path.exists(FONT_PATH):
+        with st.spinner("⏳ 正在下載繁體中文字型 (Noto Sans TC)..."):
+            urllib.request.urlretrieve(FONT_URL, FONT_PATH)
 
-ensure_model_file()
 
-st.title("⚾ 崇明國中-棒球高階揮擊診斷與動力鏈分析系統")
+ensure_dependencies()
+
+# 註冊繁體中文字型，防止 PDF 亂碼
+pdfmetrics.registerFont(TTFont("NotoSansTC", FONT_PATH))
+
+st.title("⚾ 棒球高階揮擊診斷與動力鏈分析系統")
 st.caption(
     "整合 4 大核心指標（揮棒速度、揮棒軌跡長度、攻擊仰角、擊球初速）與下半身髖關節旋轉動力鏈診斷"
 )
@@ -309,10 +320,7 @@ def generate_advanced_diagnostics(
 
 
 def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
-    """使用 ReportLab 產出包含繁體中文支援的 PDF 診斷報告"""
-    # 註冊繁體中文字型支援 (MSung-Light)
-    pdfmetrics.registerFont(UnicodeCIDFont("MSung-Light"))
-
+    """使用 ReportLab 產出包含 TrueType 繁體中文與關鍵擊球畫面截圖之 PDF 診斷報告"""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36
@@ -325,7 +333,7 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     title_style = ParagraphStyle(
         "TitleStyle",
         parent=styles["Heading1"],
-        fontName="MSung-Light",
+        fontName="NotoSansTC",
         fontSize=18,
         leading=22,
         textColor=colors.HexColor("#1E3A8A"),
@@ -334,7 +342,7 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     subtitle_style = ParagraphStyle(
         "SubTitleStyle",
         parent=styles["Normal"],
-        fontName="MSung-Light",
+        fontName="NotoSansTC",
         fontSize=10,
         leading=14,
         textColor=colors.HexColor("#4B5563"),
@@ -343,7 +351,7 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     section_style = ParagraphStyle(
         "SectionStyle",
         parent=styles["Heading2"],
-        fontName="MSung-Light",
+        fontName="NotoSansTC",
         fontSize=12,
         leading=16,
         textColor=colors.HexColor("#1E3A8A"),
@@ -353,7 +361,7 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     body_style = ParagraphStyle(
         "BodyStyle",
         parent=styles["Normal"],
-        fontName="MSung-Light",
+        fontName="NotoSansTC",
         fontSize=9,
         leading=13,
         textColor=colors.HexColor("#1F2937"),
@@ -372,7 +380,16 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     elements.append(Paragraph(score_text, ParagraphStyle("Score", parent=body_style, fontSize=11, textColor=colors.HexColor("#065F46"))))
     elements.append(Spacer(1, 10))
 
-    # 3. 4 大核心數據與動力鏈表格
+    # 3. 關鍵揮擊瞬間截圖 (Snapshot)
+    if "snapshot_bytes" in event_data and event_data["snapshot_bytes"]:
+        elements.append(Paragraph("關鍵峰值揮擊姿態截圖", section_style))
+        img_buffer = io.BytesIO(event_data["snapshot_bytes"])
+        rl_img = RLImage(img_buffer, width=380, height=213)
+        rl_img.hAlign = 'CENTER'
+        elements.append(rl_img)
+        elements.append(Spacer(1, 10))
+
+    # 4. 4 大核心數據與動力鏈表格
     elements.append(Paragraph("4 大核心指標與動力鏈實測數據", section_style))
 
     table_data = [["核心指標", "實測數值", "標竿參考值", "診斷結果"]]
@@ -384,31 +401,31 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E3A8A')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, -1), 'MSung-Light'),
+        ('FONTNAME', (0, 0), (-1, -1), 'NotoSansTC'),
         ('FONTSIZE', (0, 0), (-1, -1), 8.5),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
-        ('TOPPADDING', (0, 0), (-1, 0), 6),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 5),
+        ('TOPPADDING', (0, 0), (-1, 0), 5),
         ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F3F4F6')),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#D1D5DB')),
     ]))
     elements.append(t)
-    elements.append(Spacer(1, 12))
+    elements.append(Spacer(1, 10))
 
-    # 4. 動作修正與導引診斷
+    # 5. 動作修正與導引診斷
     elements.append(Paragraph("動作修正與導引診斷細節", section_style))
     for fb in report["feedbacks"]:
         clean_fb = fb.replace("**", "")
         elements.append(Paragraph(f"• {clean_fb}", body_style))
-        elements.append(Spacer(1, 3))
+        elements.append(Spacer(1, 2))
 
-    elements.append(Spacer(1, 8))
+    elements.append(Spacer(1, 6))
 
-    # 5. 針對性動作修正處方
+    # 6. 針對性動作修正處方
     if report["drills"]:
         elements.append(Paragraph("針對性動作修正處方 (Recommended Drills)", section_style))
         for drill in report["drills"]:
             elements.append(Paragraph(f"建議訓練項目： {drill}", ParagraphStyle("Drill", parent=body_style, textColor=colors.HexColor("#92400E"))))
-            elements.append(Spacer(1, 3))
+            elements.append(Spacer(1, 2))
 
     doc.build(elements)
     buffer.seek(0)
@@ -519,7 +536,7 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
     swing_frames_data = []
     swing_raw_frames = []
     max_speed_in_swing = 0.0
-    peak_frame_in_swing = 0
+    peak_frame_snapshot = None
     cooldown_counter = 0
 
     total_frames = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 1
@@ -624,7 +641,7 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                         swing_raw_frames = []
                         current_swing_trajectory = []
                         max_speed_in_swing = current_speed
-                        peak_frame_in_swing = frame_idx
+                        peak_frame_snapshot = annotated_frame.copy()
 
                 elif swing_state == 1:
                     if current_bat_head:
@@ -640,7 +657,7 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
 
                     if current_speed > max_speed_in_swing:
                         max_speed_in_swing = current_speed
-                        peak_frame_in_swing = frame_idx
+                        peak_frame_snapshot = annotated_frame.copy()
 
                     if (
                         max_speed_in_swing >= (min_peak_speed * 0.7)
@@ -746,6 +763,12 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                         with open(clip_filename, "rb") as vf:
                             video_bytes = vf.read()
 
+                        # 編碼峰值截圖 (JPG)
+                        snapshot_bytes = None
+                        if peak_frame_snapshot is not None:
+                            _, buf = cv2.imencode(".jpg", peak_frame_snapshot)
+                            snapshot_bytes = buf.tobytes()
+
                         detected_events.append({
                             "次數": f"第 {swing_num} 次揮棒",
                             "bat_speed": bat_speed,
@@ -755,6 +778,7 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                             "hip_speed": peak_hip_speed,
                             "report": report,
                             "video_bytes": video_bytes,
+                            "snapshot_bytes": snapshot_bytes,
                         })
 
                         cooldown_counter = int(fps * 1.8)
@@ -826,6 +850,13 @@ if st.session_state.get("is_analyzed", False):
                 f"### 🏆 揮棒綜合評分：`{report['score']} 分` (等級: {report['grade']})"
             )
 
+            if event.get("snapshot_bytes"):
+                st.image(
+                    event["snapshot_bytes"],
+                    caption=f"{selected_swing_name} 關鍵擊球瞬間姿態骨架截圖",
+                    width=500,
+                )
+
             st.subheader("📊 4 大核心數據與動力鏈標竿對比")
             st.dataframe(report["summary_df"], use_container_width=True)
 
@@ -841,7 +872,7 @@ if st.session_state.get("is_analyzed", False):
             st.markdown("---")
             pdf_bytes = generate_pdf_report(selected_swing_name, event)
             st.download_button(
-                label="📥 下載完整 PDF 診斷修正報告",
+                label="📥 下載完整 PDF 診斷修正報告 (含動作截圖)",
                 data=pdf_bytes,
                 file_name=f"baseball_swing_report_{selected_swing_name}.pdf",
                 mime="application/pdf",
