@@ -239,6 +239,12 @@ def generate_pdf_report(all_events: list) -> bytes:
         rep = ev["report"]
         elements.append(Paragraph(f"▶ {ev['次數']} - 詳細動力鏈數值與診斷", section_style))
 
+        # 插入每一次揮棒的動作截圖
+        if ev.get("snapshot_bytes"):
+            img_stream = io.BytesIO(ev["snapshot_bytes"])
+            elements.append(RLImage(img_stream, width=220, height=124))
+            elements.append(Spacer(1, 4))
+
         sub_table_data = [["核心指標", "實測數值", "標竿參考值", "診斷結果"]]
         for _, row in rep["summary_df"].iterrows():
             sub_table_data.append(
@@ -395,6 +401,11 @@ def generate_pitcher_pdf_report(all_pitches: list) -> bytes:
         p_rep = p["report"]
         elements.append(Paragraph(f"▶ {p['次數']} - 詳細投球軌跡與動作診斷", section_style))
 
+        if p.get("snapshot_bytes"):
+            img_stream = io.BytesIO(p["snapshot_bytes"])
+            elements.append(RLImage(img_stream, width=220, height=124))
+            elements.append(Spacer(1, 4))
+
         sub_table_data = [["投球核心指標", "實測數值", "標竿參考值", "診斷結果"]]
         for _, row in p_rep["summary_df"].iterrows():
             sub_table_data.append(
@@ -445,8 +456,8 @@ with tab_batting:
         camera_tilt_deg = st.slider("📐 相機傾斜補償 (度)", -20.0, 20.0, 0.0, 0.5, key="b_tilt")
         meters_per_pixel = st.slider("📏 像素轉公尺比例", 0.0010, 0.0080, 0.0032, 0.0001, key="b_mpx")
         bat_speed_factor = st.slider("🚀 速度放大倍率", 1.00, 2.00, 1.35, 0.05, key="b_fac")
-        min_peak_speed = st.slider("⚡ 最低初速門檻 (km/h)", 10.0, 50.0, 14.0, 1.0, key="b_minspd")
-        min_total_travel = st.slider("📏 最低手腕位移 (PX)", 10, 100, 30, 5, key="b_trav")
+        min_peak_speed = st.slider("⚡ 最低初速門檻 (km/h)", 5.0, 40.0, 10.0, 1.0, key="b_minspd")
+        min_total_travel = st.slider("📏 最低手腕位移 (PX)", 5, 80, 15, 5, key="b_trav")
         bat_length_px = 110
         target_width = 800
 
@@ -551,8 +562,8 @@ with tab_batting:
                     current_hip_speed = abs(h2[1] - h1[1]) / (
                         (h2[0] - h1[0]) / fps if (h2[0] - h1[0]) > 0 else 1.0 / fps)
 
-                # 提升啟動門檻與冷卻防護避免單一動作被多次觸發
-                start_trigger = max(min_peak_speed * 0.5, 8.0)
+                # 調整觸發門檻，避免卡得太嚴格抓不到動作
+                start_trigger = max(min_peak_speed * 0.4, 6.0)
                 if cooldown_counter > 0: cooldown_counter -= 1
 
                 if cooldown_counter == 0:
@@ -568,14 +579,14 @@ with tab_batting:
                         if current_speed > max_speed_in_swing:
                             max_speed_in_swing = current_speed
                             peak_frame_snapshot = annotated_frame.copy()
-                        if max_speed_in_swing >= (min_peak_speed * 0.8) and current_speed < max_speed_in_swing * 0.5:
+                        if max_speed_in_swing >= (min_peak_speed * 0.7) and current_speed < max_speed_in_swing * 0.4:
                             swing_state = 2
                     elif swing_state == 2:
                         if current_bat_head: current_swing_trajectory.append(current_bat_head)
                         swing_frames_data.append(
                             {"frame": frame_idx, "wrist": current_wrist, "bat_head": current_bat_head,
                              "speed": current_speed, "hip_speed": current_hip_speed})
-                        if current_speed <= start_trigger or len(swing_frames_data) > 60:
+                        if current_speed <= start_trigger or len(swing_frames_data) > 70:
                             swing_state = 3
 
                     if len(current_swing_trajectory) > 1:
@@ -589,9 +600,8 @@ with tab_batting:
                         tot_travel = np.sum(np.sqrt(np.sum(np.diff(np.array(wrists_sw), axis=0) ** 2, axis=1))) if len(
                             wrists_sw) >= 2 else 0.0
 
-                        # 嚴格過濾有效揮棒幀數與最小移動距離，避免微幅晃動誤判
                         if max_speed_in_swing >= min_peak_speed and len(
-                                swing_frames_data) >= 12 and tot_travel >= min_total_travel:
+                                swing_frames_data) >= 8 and tot_travel >= min_total_travel:
                             fit_pts = [item["bat_head"] for item in swing_frames_data if item["bat_head"] is not None]
                             aa, sl, r2 = calculate_attack_angle_and_length(fit_pts, meters_per_pixel, camera_tilt_deg)
                             bs, ev = max_speed_in_swing, max_speed_in_swing * 1.15
@@ -613,8 +623,7 @@ with tab_batting:
                                  "exit_velocity": ev, "report": rep, "video_bytes": v_bytes,
                                  "snapshot_bytes": sn_bytes})
 
-                        # 將冷卻時間拉長至 3.0 秒，確保同一個揮棒動作結束後的殘餘動作不會再次觸發
-                        cooldown_counter = int(fps * 3.0)
+                        cooldown_counter = int(fps * 2.0)
                         swing_state = 0
                         current_swing_trajectory = []
 
