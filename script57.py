@@ -456,8 +456,9 @@ with tab_batting:
         camera_tilt_deg = st.slider("📐 相機傾斜補償 (度)", -20.0, 20.0, 0.0, 0.5, key="b_tilt")
         meters_per_pixel = st.slider("📏 像素轉公尺比例", 0.0010, 0.0080, 0.0032, 0.0001, key="b_mpx")
         bat_speed_factor = st.slider("🚀 速度放大倍率", 1.00, 2.00, 1.35, 0.05, key="b_fac")
-        min_peak_speed = st.slider("⚡ 最低初速門檻 (km/h)", 5.0, 40.0, 10.0, 1.0, key="b_minspd")
-        min_total_travel = st.slider("📏 最低手腕位移 (PX)", 5, 80, 15, 5, key="b_trav")
+        # 💡 將預設門檻調降，提升抓球與揮棒的靈敏度
+        min_peak_speed = st.slider("⚡ 最低初速門檻 (km/h)", 3.0, 30.0, 6.0, 1.0, key="b_minspd")
+        min_total_travel = st.slider("📏 最低手腕位移 (PX)", 5, 50, 10, 5, key="b_trav")
         bat_length_px = 110
         target_width = 800
 
@@ -562,8 +563,8 @@ with tab_batting:
                     current_hip_speed = abs(h2[1] - h1[1]) / (
                         (h2[0] - h1[0]) / fps if (h2[0] - h1[0]) > 0 else 1.0 / fps)
 
-                # 調整觸發門檻，避免卡得太嚴格抓不到動作
-                start_trigger = max(min_peak_speed * 0.4, 6.0)
+                # 💡 更加放寬的觸發門檻，確保流暢揮棒絕對不會被漏抓
+                start_trigger = max(min_peak_speed * 0.3, 3.5)
                 if cooldown_counter > 0: cooldown_counter -= 1
 
                 if cooldown_counter == 0:
@@ -579,14 +580,15 @@ with tab_batting:
                         if current_speed > max_speed_in_swing:
                             max_speed_in_swing = current_speed
                             peak_frame_snapshot = annotated_frame.copy()
-                        if max_speed_in_swing >= (min_peak_speed * 0.7) and current_speed < max_speed_in_swing * 0.4:
+                        # 放寬判定結束條件，允許完整的收棒過程
+                        if max_speed_in_swing >= (min_peak_speed * 0.5) and current_speed < max_speed_in_swing * 0.25:
                             swing_state = 2
                     elif swing_state == 2:
                         if current_bat_head: current_swing_trajectory.append(current_bat_head)
                         swing_frames_data.append(
                             {"frame": frame_idx, "wrist": current_wrist, "bat_head": current_bat_head,
                              "speed": current_speed, "hip_speed": current_hip_speed})
-                        if current_speed <= start_trigger or len(swing_frames_data) > 70:
+                        if current_speed <= start_trigger or len(swing_frames_data) > 90:
                             swing_state = 3
 
                     if len(current_swing_trajectory) > 1:
@@ -601,7 +603,7 @@ with tab_batting:
                             wrists_sw) >= 2 else 0.0
 
                         if max_speed_in_swing >= min_peak_speed and len(
-                                swing_frames_data) >= 8 and tot_travel >= min_total_travel:
+                                swing_frames_data) >= 5 and tot_travel >= min_total_travel:
                             fit_pts = [item["bat_head"] for item in swing_frames_data if item["bat_head"] is not None]
                             aa, sl, r2 = calculate_attack_angle_and_length(fit_pts, meters_per_pixel, camera_tilt_deg)
                             bs, ev = max_speed_in_swing, max_speed_in_swing * 1.15
@@ -623,7 +625,7 @@ with tab_batting:
                                  "exit_velocity": ev, "report": rep, "video_bytes": v_bytes,
                                  "snapshot_bytes": sn_bytes})
 
-                        cooldown_counter = int(fps * 2.0)
+                        cooldown_counter = int(fps * 1.5)
                         swing_state = 0
                         current_swing_trajectory = []
 
