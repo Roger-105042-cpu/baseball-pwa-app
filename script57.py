@@ -11,12 +11,12 @@ import streamlit as st
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
-# ReportLab 用於 PDF 報表生成
+# ReportLab 報表套件
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.pdfbase import pdfmetrics
-from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.platypus import (
     HRFlowable,
     Paragraph,
@@ -175,80 +175,80 @@ def generate_advanced_diagnostics(
 
     # 1. 揮棒速度
     if bat_speed >= 28.0:
-        bat_speed_status = "✅ 爆發力佳"
+        bat_speed_status = "速度優異"
         feedbacks.append(
-            f"**揮棒速度 (Bat Speed)** 達 **{bat_speed:.1f} km/h**，球棒通過本壘板前緣移動速率優異，展現良好擊球爆發力。"
+            f"揮棒速度 (Bat Speed) 達 {bat_speed:.1f} km/h，球棒通過本壘板前緣移動速率優異，展現良好擊球爆發力。"
         )
     else:
-        bat_speed_status = "⚠️ 速度偏低"
+        bat_speed_status = "速度偏低"
         feedbacks.append(
-            f"**揮棒速度 (Bat Speed)** 為 **{bat_speed:.1f} km/h**，揮棒爆發力尚未完全釋放，影響最終擊球遠度。"
+            f"揮棒速度 (Bat Speed) 為 {bat_speed:.1f} km/h，揮棒爆發力尚未完全釋放，影響最終擊球遠度。"
         )
         score -= 10
 
     # 2. 揮棒軌跡長度
     if 0.65 <= swing_length <= 0.95:
-        length_status = "✅ 軌跡簡潔敏捷"
+        length_status = "軌跡簡潔"
         feedbacks.append(
-            f"**揮棒軌跡長度 (Swing Length)** 為 **{swing_length:.2f} m**，從啟動至擊球點距離適中，能有效應對高振幅速球。"
+            f"揮棒軌跡長度 (Swing Length) 為 {swing_length:.2f} m，從啟動至擊球點距離適中，能有效應對高振幅速球。"
         )
     elif swing_length > 0.95:
-        length_status = "⚠️ 軌跡過長 (繞大圈)"
+        length_status = "軌跡過長 (繞大圈)"
         feedbacks.append(
-            f"**揮棒軌跡長度 (Swing Length)** 達 **{swing_length:.2f} m** (建議 < 0.95m)。【動作修正】揮棒路徑過長（繞大圈），會大幅降低反應時間與容錯率，容易揮空。"
+            f"揮棒軌跡長度 (Swing Length) 達 {swing_length:.2f} m (建議 < 0.95m)。【動作修正】揮棒路徑過長（繞大圈），會大幅降低反應時間與容錯率，容易揮空。"
         )
         score -= 15
         drills.append("【改善軌跡】貼牆揮棒路徑收束訓練 (Wall Drill)")
     else:
-        length_status = "⚠️ 揮棒延伸不足"
+        length_status = "延伸不足"
         feedbacks.append(
-            f"**揮棒軌跡長度 (Swing Length)** 僅 **{swing_length:.2f} m**，推棒成份較多，影響擊球後段延伸與力量貫穿。"
+            f"揮棒軌跡長度 (Swing Length) 僅 {swing_length:.2f} m，推棒成份較多，影響擊球後段延伸與力量貫穿。"
         )
 
     # 3. 攻擊仰角
     if 6.0 <= attack_angle <= 18.0:
-        attack_status = "✅ 完美切入 (微向上揚)"
+        attack_status = "完美切入 (微向上揚)"
         feedbacks.append(
-            f"**攻擊仰角 (Attack Angle)** 為 **{attack_angle:.1f}°**，精確迎向擊球區軌跡，最易創造強勁平飛球。"
+            f"攻擊仰角 (Attack Angle) 為 {attack_angle:.1f}°，精確迎向擊球區軌跡，最易創造強勁平飛球。"
         )
     elif attack_angle < 6.0:
-        attack_status = "⚠️ 角度過陡/砍擊"
+        attack_status = "角度過陡 (砍擊)"
         feedbacks.append(
-            f"**攻擊仰角 (Attack Angle)** 為 **{attack_angle:.1f}°**。【動作修正】揮棒角度過陡（由上往下砍），會嚴重縮小擊球容錯區間，容易產生揮空或無力滾地球。"
+            f"攻擊仰角 (Attack Angle) 為 {attack_angle:.1f}°。【動作修正】揮棒角度過陡（由上往下砍），會嚴重縮小擊球容錯區間，容易產生揮空或無力滾地球。"
         )
         score -= 15
         drills.append("【改善軌跡】高低位置擊球座高角掃擊練習 (Elevated Tee Work)")
     else:
-        attack_status = "⚠️ 倒棒/過度仰角"
+        attack_status = "過度仰角 (倒棒)"
         feedbacks.append(
-            f"**攻擊仰角 (Attack Angle)** 達 **{attack_angle:.1f}°**，角度過大易導致倒棒，容易形成無效高飛球。"
+            f"攻擊仰角 (Attack Angle) 達 {attack_angle:.1f}°，角度過大易導致倒棒，容易形成無效高飛球。"
         )
         score -= 15
         drills.append("【改善軌跡】水平平飛擊球修正 (Level Swing Progression)")
 
     # 4. 擊球初速
     if exit_velocity >= 25.0:
-        exit_status = "✅ 力量扎實轉化"
+        exit_status = "力量扎實"
         feedbacks.append(
-            f"**預估擊球初速 (Exit Velocity)** 達 **{exit_velocity:.1f} km/h**，揮棒動能已扎實轉化為實際破壞力。"
+            f"預估擊球初速 (Exit Velocity) 達 {exit_velocity:.1f} km/h，揮棒動能已扎實轉化為實際破壞力。"
         )
     else:
-        exit_status = "⚠️ 動能轉化待提升"
+        exit_status = "轉化待提升"
         feedbacks.append(
-            f"**預估擊球初速 (Exit Velocity)** 為 **{exit_velocity:.1f} km/h**，揮棒力量未能完全轉化，建議優化擊球甜蜜點對齊。"
+            f"預估擊球初速 (Exit Velocity) 為 {exit_velocity:.1f} km/h，揮棒力量未能完全轉化，建議優化擊球甜蜜點對齊。"
         )
         score -= 10
 
     # 5. 髖關節轉速
     if hip_rot_speed >= 280.0:
-        hip_status = "✅ 骨盆轉動爆發力強"
+        hip_status = "轉動爆發力強"
         feedbacks.append(
-            f"**髖關節峰值轉速** 達 **{hip_rot_speed:.0f} deg/s**，下半身後髖關節與骨盆旋轉優異，能量鏈傳遞完整。"
+            f"髖關節峰值轉速達 {hip_rot_speed:.0f} deg/s，下半身後髖關節與骨盆旋轉優異，能量鏈傳遞完整。"
         )
     else:
-        hip_status = "⚠️ 下半身導引不足"
+        hip_status = "下半身導引不足"
         feedbacks.append(
-            f"**髖關節峰值轉速** 僅 **{hip_rot_speed:.0f} deg/s**。【強化轉動】下半身骨盆旋轉速度不足，無法確保力量由下而上完整傳遞到棒頭，導致力量斷層。"
+            f"髖關節峰值轉速僅 {hip_rot_speed:.0f} deg/s。【強化轉動】下半身骨盆旋轉速度不足，無法確保力量由下而上完整傳遞到棒頭，導致力量斷層。"
         )
         score -= 15
         drills.append("【強化轉動】後髖關節爆發力旋轉彈力帶訓練 (Hip Hinge Band Rotation)")
@@ -295,7 +295,7 @@ def generate_advanced_diagnostics(
             attack_status,
             exit_status,
             hip_status,
-            "✅ 穩定" if r_squared >= 0.88 else "⚠️ 抖動",
+            "穩定" if r_squared >= 0.88 else "抖動",
         ],
     })
 
@@ -309,7 +309,10 @@ def generate_advanced_diagnostics(
 
 
 def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
-    """使用 ReportLab 產生專屬 PDF 診斷報告"""
+    """使用 ReportLab 產出包含繁體中文支援的 PDF 診斷報告"""
+    # 註冊繁體中文字型支援 (MSung-Light)
+    pdfmetrics.registerFont(UnicodeCIDFont("MSung-Light"))
+
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36
@@ -322,7 +325,7 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     title_style = ParagraphStyle(
         "TitleStyle",
         parent=styles["Heading1"],
-        fontName="Helvetica-Bold",
+        fontName="MSung-Light",
         fontSize=18,
         leading=22,
         textColor=colors.HexColor("#1E3A8A"),
@@ -331,7 +334,7 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     subtitle_style = ParagraphStyle(
         "SubTitleStyle",
         parent=styles["Normal"],
-        fontName="Helvetica",
+        fontName="MSung-Light",
         fontSize=10,
         leading=14,
         textColor=colors.HexColor("#4B5563"),
@@ -340,7 +343,7 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     section_style = ParagraphStyle(
         "SectionStyle",
         parent=styles["Heading2"],
-        fontName="Helvetica-Bold",
+        fontName="MSung-Light",
         fontSize=12,
         leading=16,
         textColor=colors.HexColor("#1E3A8A"),
@@ -350,7 +353,7 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     body_style = ParagraphStyle(
         "BodyStyle",
         parent=styles["Normal"],
-        fontName="Helvetica",
+        fontName="MSung-Light",
         fontSize=9,
         leading=13,
         textColor=colors.HexColor("#1F2937"),
@@ -359,7 +362,7 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     elements = []
 
     # 1. 頁眉標題區
-    elements.append(Paragraph("⚾ 棒球高階揮擊診斷與動力鏈分析報告", title_style))
+    elements.append(Paragraph("棒球高階揮擊診斷與動力鏈分析報告", title_style))
     elements.append(Paragraph(f"檢測項目：{swing_title} | 報告產出系統：Baseball Kinetic Chain Diagnostic System", subtitle_style))
     elements.append(Spacer(1, 10))
     elements.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#1E3A8A"), spaceAfter=10))
@@ -370,18 +373,18 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     elements.append(Spacer(1, 10))
 
     # 3. 4 大核心數據與動力鏈表格
-    elements.append(Paragraph("📊 4 大核心指標與動力鏈實測數據", section_style))
+    elements.append(Paragraph("4 大核心指標與動力鏈實測數據", section_style))
 
     table_data = [["核心指標", "實測數值", "標竿參考值", "診斷結果"]]
     for _, row in summary_df.iterrows():
-        table_data.append([row["核心指標"], row["實測數值"], row["標竿參考值"], row["診斷結果"]])
+        table_data.append([str(row["核心指標"]), str(row["實測數值"]), str(row["標竿參考值"]), str(row["診斷結果"])])
 
     t = Table(table_data, colWidths=[150, 100, 110, 180])
     t.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E3A8A')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+        ('FONTNAME', (0, 0), (-1, -1), 'MSung-Light'),
         ('FONTSIZE', (0, 0), (-1, -1), 8.5),
         ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
         ('TOPPADDING', (0, 0), (-1, 0), 6),
@@ -392,9 +395,8 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     elements.append(Spacer(1, 12))
 
     # 4. 動作修正與導引診斷
-    elements.append(Paragraph("💡 動作修正與導引診斷細節", section_style))
+    elements.append(Paragraph("動作修正與導引診斷細節", section_style))
     for fb in report["feedbacks"]:
-        # 移除 markdown 的 ** 加粗語法供 PDF 呈現
         clean_fb = fb.replace("**", "")
         elements.append(Paragraph(f"• {clean_fb}", body_style))
         elements.append(Spacer(1, 3))
@@ -403,9 +405,9 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
 
     # 5. 針對性動作修正處方
     if report["drills"]:
-        elements.append(Paragraph("🎯 針對性動作修正處方 (Recommended Drills)", section_style))
+        elements.append(Paragraph("針對性動作修正處方 (Recommended Drills)", section_style))
         for drill in report["drills"]:
-            elements.append(Paragraph(f"👉 <b>建議訓練項目：</b> {drill}", ParagraphStyle("Drill", parent=body_style, textColor=colors.HexColor("#92400E"))))
+            elements.append(Paragraph(f"建議訓練項目： {drill}", ParagraphStyle("Drill", parent=body_style, textColor=colors.HexColor("#92400E"))))
             elements.append(Spacer(1, 3))
 
     doc.build(elements)
@@ -573,7 +575,7 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                     history_wrist.append((frame_idx, wrist[0], wrist[1]))
                     history_hip_angles.append((frame_idx, hip_angle))
 
-            # 計算即時揮棒速度 (使用滑動平均)
+            # 計算即時揮棒速度 (滑動平均)
             current_speed = 0.0
             if len(history_wrist) >= 2:
                 p1, p2 = history_wrist[-2], history_wrist[-1]
@@ -837,9 +839,6 @@ if st.session_state.get("is_analyzed", False):
                     st.info(f"👉 **建議訓練：** {drill}")
 
             st.markdown("---")
-            # ==============================================================================
-            # 【新增】下載 PDF 診斷報告按鈕
-            # ==============================================================================
             pdf_bytes = generate_pdf_report(selected_swing_name, event)
             st.download_button(
                 label="📥 下載完整 PDF 診斷修正報告",
