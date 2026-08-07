@@ -14,7 +14,7 @@ from mediapipe.tasks.python import vision
 # 0. 頁面設定與 MediaPipe 核心模型自動下載
 # ==============================================================================
 st.set_page_config(
-    page_title="崇明國中-棒球揮棒姿態與絕對座標仰角分析系統",
+    page_title="棒球揮棒姿態與 AI 診斷報告系統",
     page_icon="⚾",
     layout="wide",
 )
@@ -25,17 +25,17 @@ MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pos
 
 @st.cache_resource
 def ensure_model_file():
-    """自動下載 MediaPipe Pose Landmarker 模型檔"""
+    """自動下載 MediaPipe Pose Landmarker 核心模型檔"""
     if not os.path.exists(MODEL_PATH):
-        with st.spinner("⏳ 首次執行，正在下載 MediaPipe 模型檔..."):
+        with st.spinner("⏳ 首次執行，正在下載 MediaPipe 姿態識別模型檔..."):
             urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
 
 
 ensure_model_file()
 
-st.title("⚾ 崇明國中-棒球揮棒姿態與畫面絕對座標仰角分析系統")
+st.title("⚾ 崇明國中-棒球揮棒姿態、畫面絕對座標仰角與 AI 診斷報告系統")
 st.caption(
-    "結合畫面絕對水平座標系、相機傾斜補償、多點擬合擊球仰角與 Kinovea 甜蜜角量角規"
+    "整合 Kinovea 式畫面絕對水平基準、多點軌跡擬合仰角、相機傾斜補償與標竿自動診斷報告"
 )
 
 # ==============================================================================
@@ -51,7 +51,7 @@ with st.sidebar:
         max_value=20.0,
         value=0.0,
         step=0.5,
-        help="以畫面絕對 X 軸為 0° 基準。若手持拍攝或相機未架平，可調整此值使綠線對齊地面或圍欄。",
+        help="以畫面絕對 X 軸為 0° 基準。若手持拍攝或相機未架平，可調整此值使綠線完全平行於地面。",
     )
 
     st.subheader("2. 距離與比例標定")
@@ -61,7 +61,7 @@ with st.sidebar:
         max_value=0.0080,
         value=0.0032,
         step=0.0001,
-        help="遠景拍（人小）請調大（如 0.004~0.005）；近景拍（人大）請調小。",
+        help="遠景拍攝請調大（如 0.0040~0.0050）；近景拍攝請調小。",
     )
 
     bat_speed_factor = st.slider(
@@ -79,7 +79,7 @@ with st.sidebar:
         max_value=50.0,
         value=15.0,
         step=1.0,
-        help="低於此初速不結算為揮棒。若經常漏抓請調低（如 12~15 km/h）。",
+        help="低於此初速不結算為揮棒。若經常漏抓揮棒請調低。",
     )
 
     min_total_travel = st.slider(
@@ -100,21 +100,19 @@ with st.sidebar:
         st.rerun()
 
 # ==============================================================================
-# 2. 核心數學演算法：畫面絕對座標仰角計算與 Kinovea 繪圖
+# 2. 核心幾何演算法與自動報告產出模組
 # ==============================================================================
 
 
 def calculate_launch_angle_multipoint(
     trajectory_points: list[tuple[int, int]], camera_tilt: float = 0.0
-) -> float:
-    """使用畫面絕對座標系與多點最小二乘法線性擬合計算擊球仰角
+) -> tuple[float, float]:
+    """使用畫面絕對座標系與多點最小二乘法計算擊球仰角與平順度 (R²)
 
-    :param trajectory_points: 擊球瞬間前後的棒頭座標 [(x0, y0), (x1, y1), ...]
-    :param camera_tilt: 相機傾斜補償角 (度)
-    :return: 修正後的物理擊球仰角 (度)
+    :return: (擊球仰角_度, 平順度_R2)
     """
     if len(trajectory_points) < 2:
-        return 0.0
+        return 0.0, 0.0
 
     pts = np.array(trajectory_points, dtype=np.float64)
     x = pts[:, 0]
@@ -125,13 +123,24 @@ def calculate_launch_angle_multipoint(
     x_rel = (x - x[0]) * x_dir
 
     # 一階線性擬合 y = m * x + c
-    slope, _ = np.polyfit(x_rel, y_phys, 1)
+    slope, intercept = np.polyfit(x_rel, y_phys, 1)
+
+    # 計算擬合平順度 (R² Score)
+    y_pred = slope * x_rel + intercept
+    ss_res = np.sum((y_phys - y_pred) ** 2)
+    ss_tot = np.sum((y_phys - np.mean(y_phys)) ** 2)
+    r_squared = (
+        1.0 - (ss_res / ss_tot)
+        if ss_tot > 0
+        else (1.0 if ss_res == 0 else 0.0)
+    )
+    r_squared = max(0.0, min(1.0, r_squared))
 
     # 弧度轉角度並扣除相機傾斜角
     raw_angle_deg = math.degrees(math.atan(slope))
     final_launch_angle = raw_angle_deg - camera_tilt
 
-    return round(final_launch_angle, 1)
+    return round(final_launch_angle, 1), round(r_squared, 2)
 
 
 def draw_kinovea_protractor(
@@ -210,7 +219,7 @@ def process_frame(
     bat_length: int,
     tilt_angle: float,
 ):
-    """擷取關節座標、繪製骨架與延長棒頭線"""
+    """擷取關節座標、繪製骨架與延伸棒頭線"""
     if not pose_landmarks:
         return None, None
 
@@ -263,6 +272,111 @@ def process_frame(
         draw_kinovea_protractor(frame, wrist_center, tilt_angle)
 
     return wrist_center, bat_head
+
+
+def generate_swing_report(
+    peak_speed: float,
+    launch_angle: float,
+    swing_duration: float,
+    r_squared: float,
+) -> dict:
+    """自動比對標竿數據並產出詳細評分與訓練診斷報告"""
+    score = 100
+    feedbacks = []
+    recommended_drills = []
+
+    # 1. 擊球仰角評估 (15° - 35°)
+    if 15.0 <= launch_angle <= 35.0:
+        angle_status = "✅ 優秀 (甜蜜角)"
+        feedbacks.append(
+            f"仰角為 **{launch_angle}°**，處於的最佳平飛長打區間 (15°~35°)。"
+        )
+    elif launch_angle < 15.0:
+        angle_status = "⚠️ 偏低 (易滾地)"
+        feedbacks.append(
+            f"仰角僅 **{launch_angle}°**，容易打成滾地球。請調整擊球點前後位置，保持擊球時身體不過度前傾。"
+        )
+        score -= 15
+        recommended_drills.append(
+            "高低擊球座標竿訓練 (Tee Work for Elevated Contact)"
+        )
+    else:
+        angle_status = "⚠️ 偏高 (易高飛)"
+        feedbacks.append(
+            f"仰角達 **{launch_angle}°**，容易打成無效高飛球。請注意揮棒過程中是否有過度倒肩或倒棒現象。"
+        )
+        score -= 15
+        recommended_drills.append("水平掃擊與平飛打擊修正訓練 (Level Swing Drill)")
+
+    # 2. 出棒時間評估 (理想 <= 0.22 秒)
+    if swing_duration <= 0.22:
+        speed_status = "✅ 揮棒簡潔"
+        feedbacks.append(
+            f"啟動至擊球耗時 **{swing_duration:.2f} 秒**，出棒路徑非常簡潔俐落。"
+        )
+    else:
+        speed_status = "⚠️ 揮棒歷時偏長"
+        feedbacks.append(
+            f"耗時 **{swing_duration:.2f} 秒** (標竿 < 0.22 秒)，出棒可能存在拉棒或軌跡繞大圈的現象。"
+        )
+        score -= 15
+        recommended_drills.append("貼牆揮棒路徑收束訓練 (Wall Drill)")
+
+    # 3. 軌跡平順度評估 (R² >= 0.88)
+    if r_squared >= 0.88:
+        plane_status = "✅ 軌跡平順"
+        feedbacks.append(
+            f"軌跡平順度 R² 為 **{r_squared:.2f}**，棒頭揮擊平面非常穩定。"
+        )
+    else:
+        plane_status = "⚠️ 軌跡波動較大"
+        feedbacks.append(
+            f"軌跡平順度 R² 僅 **{r_squared:.2f}**，揮棒過程中有抖動或脫軌現象，可能擊球瞬間手腕提早翻轉。"
+        )
+        score -= 10
+        recommended_drills.append("單手控棒穩定度訓練 (One-Handed Swing Drill)")
+
+    # 4. 擊球初速評估
+    if peak_speed >= 25.0:
+        power_status = "✅ 爆發力佳"
+    else:
+        power_status = "⚠️ 速度待提升"
+
+    # 5. 等級評定
+    score = max(0, score)
+    if score >= 90:
+        grade = "S (優異 A+)"
+    elif score >= 75:
+        grade = "A (良好)"
+    elif score >= 60:
+        grade = "B (尚可/需微調)"
+    else:
+        grade = "C (建議調整基礎動作)"
+
+    summary_df = pd.DataFrame({
+        "檢測指標": [
+            "擊球初速 (Peak Speed)",
+            "擊球仰角 (Launch Angle)",
+            "出棒耗時 (Swing Duration)",
+            "軌跡平順度 (R² Score)",
+        ],
+        "實測數據": [
+            f"{peak_speed:.1f} km/h",
+            f"{launch_angle:.1f}°",
+            f"{swing_duration:.2f} 秒",
+            f"{r_squared:.2f}",
+        ],
+        "最佳標竿": ["> 25.0 km/h", "15.0° - 35.0°", "≤ 0.22 秒", "≥ 0.88"],
+        "診斷結果": [power_status, angle_status, speed_status, plane_status],
+    })
+
+    return {
+        "score": score,
+        "grade": grade,
+        "summary_df": summary_df,
+        "feedbacks": feedbacks,
+        "drills": recommended_drills,
+    }
 
 
 def save_swing_clip(
@@ -397,7 +511,7 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
                     current_bat_head = bat_head
                     history_wrist.append((frame_idx, wrist[0], wrist[1]))
 
-            # 計算即時手腕與棒頭加速度
+            # 計算即時加速度
             current_speed = 0.0
             if len(history_wrist) >= 2:
                 p1 = history_wrist[-2]
@@ -504,15 +618,15 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
                 if swing_state in [1, 2]:
                     swing_raw_frames.append(annotated_frame.copy())
 
-                # 結算本次揮棒
+                # 結算本次揮棒並計算報告
                 if swing_state == 3:
-                    # 擷取峰值初速前後 3~5 影格做多點線性擬合計算仰角
                     peak_sub_idx = [
                         i
                         for i, item in enumerate(swing_frames_data)
                         if item["frame"] == peak_frame_in_swing
                     ]
                     launch_angle = 0.0
+                    r_squared = 0.0
 
                     if peak_sub_idx:
                         p_idx = peak_sub_idx[0]
@@ -527,9 +641,19 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
                             if item["bat_head"] is not None
                         ]
 
-                        launch_angle = calculate_launch_angle_multipoint(
+                        (
+                            launch_angle,
+                            r_squared,
+                        ) = calculate_launch_angle_multipoint(
                             fit_pts, camera_tilt_deg
                         )
+
+                    duration = len(swing_frames_data) / fps
+
+                    # 自動產出 AI 診斷報告
+                    report = generate_swing_report(
+                        max_speed_in_swing, launch_angle, duration, r_squared
+                    )
 
                     frame_logs = []
                     start_f = (
@@ -572,10 +696,12 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
                         "次數": f"第 {swing_num} 次揮棒",
                         "初速": f"{max_speed_in_swing:.1f} km/h",
                         "仰角": f"{launch_angle:.1f}°",
-                        "耗時": f"{(len(swing_frames_data) / fps):.2f} 秒",
+                        "耗時": f"{duration:.2f} 秒",
+                        "r_squared": f"{r_squared:.2f}",
                         "total_frames": len(swing_frames_data),
                         "video_bytes": video_bytes,
                         "detailed_df": detailed_df,
+                        "report": report,
                     })
 
                     swing_state = 0
@@ -604,7 +730,7 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
     st.rerun()
 
 # ==============================================================================
-# 5. 分析結果展示區
+# 5. 分析結果與 AI 診斷報告展示區
 # ==============================================================================
 if st.session_state.is_analyzed:
     events = st.session_state.swing_events
@@ -620,7 +746,7 @@ if st.session_state.is_analyzed:
 
         option_list = [e["次數"] for e in events]
         selected_swing_name = st.selectbox(
-            "🎯 請選擇揮棒次數以檢視詳細分析：",
+            "🎯 請選擇揮棒次數以檢視詳細分析與報告：",
             options=option_list,
             index=len(option_list) - 1,
         )
@@ -634,19 +760,43 @@ if st.session_state.is_analyzed:
         col1.metric("⚡ 擊球初速", selected_event["初速"])
         col2.metric("📐 絕對座標擊球仰角", selected_event["仰角"])
         col3.metric("⏱️ 揮棒耗時", selected_event["耗時"])
-        col4.metric("🎞️ 記錄影格點數", f"{selected_event['total_frames']} 點")
+        col4.metric("📈 軌跡平順度 (R²)", selected_event["r_squared"])
 
-        tab1, tab2 = st.tabs(
-            ["🎬 Kinovea 風格慢動作回放", "📊 逐幀軌跡數據表"]
-        )
+        tab1, tab2, tab3 = st.tabs([
+            "🎬 Kinovea 慢動作回放",
+            "📄 揮擊診斷建議報告",
+            "📊 逐幀軌跡數據表",
+        ])
 
         with tab1:
             st.markdown(
-                f"#### 🎬 {selected_event['次數']} - 慢動作回放（含綠線絕對地平線與黃色 15°-35° 甜蜜角區域）"
+                f"#### 🎬 {selected_event['次數']} - 慢動作回放（綠線：畫面絕對水平基準；黃區：15°-35° 甜蜜角區域）"
             )
             st.video(selected_event["video_bytes"], format="video/webm")
 
         with tab2:
+            report = selected_event["report"]
+            st.markdown(
+                f"### 🏆 揮棒綜合評分：`{report['score']} 分` (評級: {report['grade']})"
+            )
+
+            st.subheader("📊 指標檢測與標竿比對")
+            st.dataframe(report["summary_df"], use_container_width=True)
+
+            st.subheader("💡 專業動作診斷與建議")
+            for fb in report["feedbacks"]:
+                st.write(f"- {fb}")
+
+            if report["drills"]:
+                st.subheader("🎯 建議針對性訓練處方 (Recommended Drills)")
+                for drill in report["drills"]:
+                    st.info(f"👉 **推薦處方：** {drill}")
+            else:
+                st.success(
+                    "🎉 動作非常標準！請保持當前的揮棒節奏與軌跡延伸。"
+                )
+
+        with tab3:
             st.markdown(f"#### 📋 {selected_event['次數']} 明細數據")
             st.dataframe(
                 selected_event["detailed_df"],
