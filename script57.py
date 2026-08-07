@@ -29,7 +29,7 @@ from reportlab.platypus import (
 )
 
 # ==============================================================================
-# 0. 頁面設定與模型/字型下載
+# 0. 頁面設定與模型/字型註冊 (防亂碼核心機制)
 # ==============================================================================
 st.set_page_config(
     page_title="⚾ 棒球高階揮擊診斷與動力鏈分析系統",
@@ -40,9 +40,8 @@ st.set_page_config(
 MODEL_PATH = "pose_landmarker_heavy.task"
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task"
 
-FONT_PATH = "NotoSansTC-Regular.ttf"
-# 改用多重備援的穩定字型下載點 (Google Fonts 原始檔)
-NOTO_TC_URL = "https://github.com/google/fonts/raw/main/ofl/notosanstc/NotoSansTC-Regular.ttf"
+FONT_FILE = "NotoSansTC-Regular.ttf"
+FONT_NAME = "NotoSansTC"
 
 
 def download_file_with_user_agent(url, save_path):
@@ -73,28 +72,27 @@ def ensure_dependencies():
             except Exception as e:
                 st.error(f"❌ 模型下載失敗: {e}")
 
-    # 2. 下載繁體中文字型 (Noto Sans TC)
-    if not os.path.exists(FONT_PATH):
-        try:
-            with st.spinner("⏳ 正在下載繁體中文字型 (Noto Sans TC)..."):
-                download_file_with_user_agent(NOTO_TC_URL, FONT_PATH)
-        except Exception as e:
-            st.warning(f"⚠️ 線上字型下載失敗 ({e})，將自動啟用系統內建 CID 中文字型。")
-
 
 ensure_dependencies()
 
-# 註冊繁體中文字型，防止 PDF 亂碼
-FONT_NAME = "NotoSansTC"
-if os.path.exists(FONT_PATH):
+# 2. 強制註冊繁體中文字型（優先讀取本地，次之備援）
+if os.path.exists(FONT_FILE):
     try:
-        pdfmetrics.registerFont(TTFont("NotoSansTC", FONT_PATH))
+        pdfmetrics.registerFont(TTFont(FONT_NAME, FONT_FILE))
     except Exception:
-        pdfmetrics.registerFont(UnicodeCIDFont("MSung-Light"))
-        FONT_NAME = "MSung-Light"
+        # 若 TTFont 註冊失敗，改用內建 CID 中文字型
+        FONT_NAME = "STSong-Light"
+        try:
+            pdfmetrics.registerFont(UnicodeCIDFont(FONT_NAME))
+        except:
+            pass
 else:
-    pdfmetrics.registerFont(UnicodeCIDFont("MSung-Light"))
-    FONT_NAME = "MSung-Light"
+    # 本地若無字型檔案，嘗試註冊 ReportLab 內建中文字型
+    FONT_NAME = "STSong-Light"
+    try:
+        pdfmetrics.registerFont(UnicodeCIDFont(FONT_NAME))
+    except:
+        FONT_NAME = "Helvetica"  # 最後防線
 
 st.title("⚾ 棒球高階揮擊診斷與動力鏈分析系統")
 st.caption(
