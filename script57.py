@@ -405,7 +405,7 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     elements = []
 
     # 1. 頁眉標題區
-    elements.append(Paragraph("棒球高階揮擊診斷與動力鏈分析報告", title_style))
+    elements.append(Paragraph("崇明國中棒球隊 - 棒球高階揮擊診斷與動力鏈分析報告", title_style))
     elements.append(Paragraph(f"檢測項目：{swing_title} | 報告產出系統：Baseball Kinetic Chain Diagnostic System", subtitle_style))
     elements.append(Spacer(1, 10))
     elements.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#1E3A8A"), spaceAfter=10))
