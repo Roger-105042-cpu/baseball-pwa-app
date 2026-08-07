@@ -482,7 +482,6 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
             # ==============================================================================
             # 【修復誤判】優化後的揮棒偵測與狀態機邏輯
             # ==============================================================================
-            # 1. 提高啟動門檻，避免收棒小動作誤觸發 (提高至 Peak Speed 的 60%)
             start_trigger_speed = max(min_peak_speed * 0.60, 10.0)
 
             if cooldown_counter > 0:
@@ -490,7 +489,6 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
 
             if cooldown_counter == 0:
                 if swing_state == 0:
-                    # 必須達到較高速度門檻才觸發揮棒準備
                     if current_speed >= start_trigger_speed:
                         swing_state = 1
                         swing_frames_data = []
@@ -515,7 +513,6 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                         max_speed_in_swing = current_speed
                         peak_frame_in_swing = frame_idx
 
-                    # 速度從 Peak 降至 50% 以下，進入減速階段
                     if (
                         max_speed_in_swing >= min_peak_speed
                         and current_speed < max_speed_in_swing * 0.5
@@ -534,7 +531,6 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                         "hip_speed": current_hip_speed,
                     })
 
-                    # 速度降低至低點或過長時準備結算
                     if (
                         current_speed <= start_trigger_speed * 0.5
                         or len(swing_frames_data) > 40
@@ -554,7 +550,6 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
 
                 # 結算揮棒並產出分析數據
                 if swing_state == 3:
-                    # 2. 增加雙重過濾條件：必須達到 Peak Speed 門檻，且有效持續時間至少 8 幀（約 >0.25 秒）
                     if (
                         max_speed_in_swing >= min_peak_speed
                         and len(swing_frames_data) >= 8
@@ -620,10 +615,8 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                             "video_bytes": video_bytes,
                         })
 
-                        # 3. 延長冷卻時間至 2 秒 (fps * 2.0)，防止收棒與回到準備姿勢時二次觸發
                         cooldown_counter = int(fps * 2.0)
 
-                    # 重置揮棒狀態
                     swing_state = 0
                     current_swing_trajectory = []
 
@@ -687,3 +680,21 @@ if st.session_state.get("is_analyzed", False):
         )
 
         with tab1:
+            st.markdown(
+                f"### 🏆 揮棒綜合評分：`{report['score']} 分` (等級: {report['grade']})"
+            )
+
+            st.subheader("📊 4 大核心數據與動力鏈標竿對比")
+            st.dataframe(report["summary_df"], use_container_width=True)
+
+            st.subheader("💡 動作修正與導引診斷")
+            for fb in report["feedbacks"]:
+                st.write(f"- {fb}")
+
+            if report["drills"]:
+                st.subheader("🎯 針對性動作修正處方 (Recommended Drills)")
+                for drill in report["drills"]:
+                    st.info(f"👉 **建議訓練：** {drill}")
+
+        with tab2:
+            st.video(event["video_bytes"], format="video/webm")
