@@ -186,11 +186,10 @@ def generate_advanced_diagnostics(bat_speed, swing_length, attack_angle, exit_ve
             "drills": list(set(drills))}
 
 
-def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
+def generate_pdf_report(all_events: list) -> bytes:
+    """將所有打擊偵測次數與數值全數包進同一個完整的 PDF 報告中"""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
-    report = event_data["report"]
-    summary_df = report["summary_df"]
 
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle("TitleStyle", parent=styles["Heading1"], fontName=FONT_NAME, fontSize=16, leading=20,
@@ -198,36 +197,36 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     subtitle_style = ParagraphStyle("SubTitleStyle", parent=styles["Normal"], fontName=FONT_NAME, fontSize=9,
                                     leading=12, textColor=colors.HexColor("#4B5563"), alignment=1)
     section_style = ParagraphStyle("SectionStyle", parent=styles["Heading2"], fontName=FONT_NAME, fontSize=11,
-                                   leading=14, textColor=colors.HexColor("#1E3A8A"), spaceBefore=8, spaceAfter=4)
+                                   leading=14, textColor=colors.HexColor("#1E3A8A"), spaceBefore=10, spaceAfter=4)
     body_style = ParagraphStyle("BodyStyle", parent=styles["Normal"], fontName=FONT_NAME, fontSize=8.5, leading=11.5,
                                 textColor=colors.HexColor("#1F2937"))
 
     elements = [
-        Paragraph("棒球高階打擊動力鏈完整分析報告", title_style),
+        Paragraph("棒球高階打擊動力鏈 - 全數揮擊次數完整分析總報告", title_style),
         Paragraph("<b>崇明國中棒球隊</b>", subtitle_style),
         Spacer(1, 4),
-        Paragraph(f"檢測項目：{swing_title} | 系統：Baseball Kinetic Chain Diagnostic", subtitle_style),
+        Paragraph(f"總計檢測有效揮擊次數：{len(all_events)} 次 | 系統：Baseball Kinetic Chain Diagnostic",
+                  subtitle_style),
         Spacer(1, 8),
         HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#1E3A8A"), spaceAfter=8),
-        Paragraph(
-            f"<b>綜合動作評分：</b> {report['score']} 分 &nbsp;&nbsp;&nbsp;&nbsp; <b>等級評定：</b> {report['grade']}",
-            ParagraphStyle("Score", parent=body_style, fontSize=10, textColor=colors.HexColor("#065F46"))),
-        Spacer(1, 8),
     ]
 
-    if "snapshot_bytes" in event_data and event_data["snapshot_bytes"]:
-        elements.append(Paragraph("關鍵峰值揮擊姿態截圖", section_style))
-        rl_img = RLImage(io.BytesIO(event_data["snapshot_bytes"]), width=300, height=168)
-        rl_img.hAlign = 'CENTER'
-        elements.extend([rl_img, Spacer(1, 8)])
+    # 1. 建立所有揮擊的「總覽清單大表」
+    elements.append(Paragraph("所有偵測揮擊次數之核心數據總表", section_style))
+    master_table_data = [["次數", "揮棒速度", "軌跡長度", "攻擊仰角", "擊球初速", "綜合評分", "等級"]]
+    for ev in all_events:
+        master_table_data.append([
+            str(ev["次數"]),
+            f"{ev['bat_speed']:.1f} km/h",
+            f"{ev['swing_length']:.2f} m",
+            f"{ev['attack_angle']:.1f}°",
+            f"{ev['exit_velocity']:.1f} km/h",
+            f"{ev['report']['score']} 分",
+            str(ev['report']['grade'])
+        ])
 
-    elements.append(Paragraph("4 大核心指標與動力鏈實測全數數據總覽", section_style))
-    table_data = [["核心指標", "實測數值", "標竿參考值", "診斷結果"]]
-    for _, row in summary_df.iterrows():
-        table_data.append([str(row["核心指標"]), str(row["實測數值"]), str(row["標竿參考值"]), str(row["診斷結果"])])
-
-    t = Table(table_data, colWidths=[140, 100, 110, 190])
-    t.setStyle(TableStyle([
+    master_t = Table(master_table_data, colWidths=[60, 90, 80, 80, 90, 60, 80])
+    master_t.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E3A8A')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
@@ -236,16 +235,40 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
         ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F3F4F6')),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#D1D5DB')),
     ]))
-    elements.extend([t, Spacer(1, 8), Paragraph("完整動作診斷意見細節", section_style)])
-    for fb in report["feedbacks"]:
-        elements.extend([Paragraph(f"• {fb.replace('**', '')}", body_style), Spacer(1, 1)])
+    elements.extend([master_t, Spacer(1, 12)])
 
-    if report["drills"]:
-        elements.extend([Spacer(1, 4), Paragraph("針對性動作修正處方清單", section_style)])
-        for drill in report["drills"]:
-            elements.extend([Paragraph(f"建議訓練項目： {drill}", ParagraphStyle("Drill", parent=body_style,
-                                                                                textColor=colors.HexColor("#92400E"))),
-                             Spacer(1, 1)])
+    # 2. 逐一展開每一次揮擊的細節與診斷
+    for idx, ev in enumerate(all_events):
+        rep = ev["report"]
+        elements.append(Paragraph(f"▶ {ev['次數']} - 詳細動力鏈數值與診斷", section_style))
+
+        # 內嵌該次揮擊的小表格
+        sub_table_data = [["核心指標", "實測數值", "標竿參考值", "診斷結果"]]
+        for _, row in rep["summary_df"].iterrows():
+            sub_table_data.append(
+                [str(row["核心指標"]), str(row["實測數值"]), str(row["標竿參考值"]), str(row["診斷結果"])])
+
+        sub_t = Table(sub_table_data, colWidths=[130, 100, 110, 200])
+        sub_t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#374151')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, -1), FONT_NAME),
+            ('FONTSIZE', (0, 0), (-1, -1), 7.5),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F9FAFB')),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#D1D5DB')),
+        ]))
+        elements.extend([sub_t, Spacer(1, 4)])
+
+        for fb in rep["feedbacks"]:
+            elements.append(Paragraph(f"• {fb.replace('**', '')}", body_style))
+
+        if rep["drills"]:
+            for drill in rep["drills"]:
+                elements.append(Paragraph(f"💡 處方：{drill}", ParagraphStyle("Drill", parent=body_style,
+                                                                            textColor=colors.HexColor("#92400E"))))
+
+        elements.append(Spacer(1, 8))
 
     doc.build(elements)
     buffer.seek(0)
@@ -321,11 +344,10 @@ def generate_pitcher_diagnostics(pitch_speed, release_height, h_break, v_break):
             "drills": list(set(drills))}
 
 
-def generate_pitcher_pdf_report(pitch_title: str, event_data: dict) -> bytes:
+def generate_pitcher_pdf_report(all_pitches: list) -> bytes:
+    """將所有投手投球次數與數值全數包進同一個完整的 PDF 報告中"""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
-    report = event_data["report"]
-    summary_df = report["summary_df"]
 
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle("TitleStyle", parent=styles["Heading1"], fontName=FONT_NAME, fontSize=16, leading=20,
@@ -333,37 +355,39 @@ def generate_pitcher_pdf_report(pitch_title: str, event_data: dict) -> bytes:
     subtitle_style = ParagraphStyle("SubTitleStyle", parent=styles["Normal"], fontName=FONT_NAME, fontSize=9,
                                     leading=12, textColor=colors.HexColor("#4B5563"), alignment=1)
     section_style = ParagraphStyle("SectionStyle", parent=styles["Heading2"], fontName=FONT_NAME, fontSize=11,
-                                   leading=14, textColor=colors.HexColor("#1E3A8A"), spaceBefore=8, spaceAfter=4)
+                                   leading=14, textColor=colors.HexColor("#1E3A8A"), spaceBefore=10, spaceAfter=4)
     body_style = ParagraphStyle("BodyStyle", parent=styles["Normal"], fontName=FONT_NAME, fontSize=8.5, leading=11.5,
                                 textColor=colors.HexColor("#1F2937"))
 
     elements = [
-        Paragraph("崇明國中棒球隊 - 投手投球與進壘軌跡完整分析報告", title_style),
+        Paragraph("崇明國中棒球隊 - 全數投球與進壘軌跡完整分析總報告", title_style),
         Paragraph("<b>崇明國中棒球隊</b>", subtitle_style),
         Spacer(1, 4),
-        Paragraph(f"檢測項目：{pitch_title} | 系統：Pitch Tracking System", subtitle_style),
+        Paragraph(f"總計檢測有效投球數：{len(all_pitches)} 球 | 系統：Pitch Tracking System", subtitle_style),
         Spacer(1, 8),
         HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#1E3A8A"), spaceAfter=8),
-        Paragraph(
-            f"<b>綜合投球評分：</b> {report['score']} 分 &nbsp;&nbsp;&nbsp;&nbsp; <b>等級評定：</b> {report['grade']}",
-            ParagraphStyle("Score", parent=body_style, fontSize=10, textColor=colors.HexColor("#065F46"))),
-        Spacer(1, 8),
     ]
 
-    if "snapshot_bytes" in event_data and event_data["snapshot_bytes"]:
-        elements.append(Paragraph("投球出手瞬間截圖", section_style))
-        rl_img = RLImage(io.BytesIO(event_data["snapshot_bytes"]), width=300, height=168)
-        rl_img.hAlign = 'CENTER'
-        elements.extend([rl_img, Spacer(1, 8)])
+    # 1. 建立所有投球的「總覽清單大表」
+    elements.append(Paragraph("所有偵測投球次數之核心數據總表", section_style))
+    master_table_data = [["次數", "智慧辨識球種", "投球初速", "橫向位移", "垂直位移", "綜合評分", "等級"]]
+    for p in all_pitches:
+        p_rep = p["report"]
+        # 從 report summary 中取得球種
+        identified_type = \
+        p_rep["summary_df"].loc[p_rep["summary_df"]["投球核心指標"] == "智慧辨識球種", "實測數值"].values[0]
+        master_table_data.append([
+            str(p["次數"]),
+            str(identified_type),
+            f"{p['pitch_speed']:.1f} km/h",
+            f"{p['h_break']:.1f} cm",
+            f"{p['v_break']:.1f} cm",
+            f"{p_rep['score']} 分",
+            str(p_rep['grade'])
+        ])
 
-    elements.append(Paragraph("投球數據與進壘軌跡全數實測數值總結", section_style))
-    table_data = [["投球核心指標", "實測數值", "標竿參考值", "診斷結果"]]
-    for _, row in summary_df.iterrows():
-        table_data.append(
-            [str(row["投球核心指標"]), str(row["實測數值"]), str(row["標竿參考值"]), str(row["診斷結果"])])
-
-    t = Table(table_data, colWidths=[130, 110, 110, 190])
-    t.setStyle(TableStyle([
+    master_t = Table(master_table_data, colWidths=[50, 110, 80, 75, 75, 60, 90])
+    master_t.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E3A8A')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
@@ -372,16 +396,39 @@ def generate_pitcher_pdf_report(pitch_title: str, event_data: dict) -> bytes:
         ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F3F4F6')),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#D1D5DB')),
     ]))
-    elements.extend([t, Spacer(1, 8), Paragraph("投球動作全數診斷細節", section_style)])
-    for fb in report["feedbacks"]:
-        elements.extend([Paragraph(f"• {fb.replace('**', '')}", body_style), Spacer(1, 1)])
+    elements.extend([master_t, Spacer(1, 12)])
 
-    if report["drills"]:
-        elements.extend([Spacer(1, 4), Paragraph("針對性訓練處方清單", section_style)])
-        for drill in report["drills"]:
-            elements.extend([Paragraph(f"建議項目： {drill}", ParagraphStyle("Drill", parent=body_style,
-                                                                            textColor=colors.HexColor("#92400E"))),
-                             Spacer(1, 1)])
+    # 2. 逐一展開每一球的細節與診斷
+    for p in all_pitches:
+        p_rep = p["report"]
+        elements.append(Paragraph(f"▶ {p['次數']} - 詳細投球軌跡與動作診斷", section_style))
+
+        sub_table_data = [["投球核心指標", "實測數值", "標竿參考值", "診斷結果"]]
+        for _, row in p_rep["summary_df"].iterrows():
+            sub_table_data.append(
+                [str(row["投球核心指標"]), str(row["實測數值"]), str(row["標竿參考值"]), str(row["診斷結果"])])
+
+        sub_t = Table(sub_table_data, colWidths=[130, 105, 110, 195])
+        sub_t.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#374151')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, -1), FONT_NAME),
+            ('FONTSIZE', (0, 0), (-1, -1), 7.5),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F9FAFB')),
+            ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#D1D5DB')),
+        ]))
+        elements.extend([sub_t, Spacer(1, 4)])
+
+        for fb in p_rep["feedbacks"]:
+            elements.append(Paragraph(f"• {fb.replace('**', '')}", body_style))
+
+        if p_rep["drills"]:
+            for drill in p_rep["drills"]:
+                elements.append(Paragraph(f"💡 處方：{drill}", ParagraphStyle("Drill", parent=body_style,
+                                                                            textColor=colors.HexColor("#92400E"))))
+
+        elements.append(Spacer(1, 8))
 
     doc.build(elements)
     buffer.seek(0)
@@ -594,7 +641,18 @@ with tab_batting:
             st.warning("⚠️ 未能偵測到有效揮棒，請調整側邊欄門檻。")
         else:
             st.success(f"✅ 完成分析！共偵測到 {len(events)} 次揮棒。")
-            sel_s = st.selectbox("🎯 選擇揮棒次數檢視：", [e["次數"] for e in events], key="sel_bat")
+
+            # 按鈕直接下載包含「全部揮擊次數」的完整 PDF 報告
+            st.download_button(
+                "📥 下載全部揮擊次數之總合 PDF 報告",
+                data=generate_pdf_report(events),
+                file_name="batting_all_swings_report.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key="dl_all_bat"
+            )
+
+            sel_s = st.selectbox("🎯 選擇單次揮棒進行畫面預覽：", [e["次數"] for e in events], key="sel_bat")
             ev_data = next(e for e in events if e["次數"] == sel_s)
             rep = ev_data["report"]
 
@@ -604,15 +662,12 @@ with tab_batting:
             c3.metric("📐 攻擊仰角", f"{ev_data['attack_angle']:.1f}°")
             c4.metric("⚡ 擊球初速", f"{ev_data['exit_velocity']:.1f} km/h")
 
-            t_sub1, t_sub2 = st.tabs(["📄 診斷報告", "🎬 動作回放"])
+            t_sub1, t_sub2 = st.tabs(["📄 單次診斷明細", "🎬 動作回放"])
             with t_sub1:
                 st.markdown(f"### 🏆 評分：`{rep['score']} 分` ({rep['grade']})")
                 if ev_data.get("snapshot_bytes"): st.image(ev_data["snapshot_bytes"], width=400)
                 st.dataframe(rep["summary_df"], use_container_width=True)
                 for fb in rep["feedbacks"]: st.write(f"- {fb}")
-                st.download_button("📥 下載打擊完整 PDF 報告", data=generate_pdf_report(sel_s, ev_data),
-                                   file_name=f"batting_{sel_s}.pdf", mime="application/pdf", use_container_width=True,
-                                   key="dl_bat")
             with t_sub2:
                 st.video(ev_data["video_bytes"], format="video/webm")
 
@@ -741,7 +796,18 @@ with tab_pitching:
             st.warning("⚠️ 未能偵測到有效投球，請重新上傳或確認影片內容。")
         else:
             st.success(f"✅ 完成分析！共偵測到 {len(pitches)} 球。")
-            sel_p = st.selectbox("🎯 選擇投球次數檢視：", [p["次數"] for p in pitches], key="sel_pitch")
+
+            # 按鈕直接下載包含「全部投球數」的完整 PDF 報告
+            st.download_button(
+                "📥 下載全部投球數之總合 PDF 報告",
+                data=generate_pitcher_pdf_report(pitches),
+                file_name="pitching_all_pitches_report.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+                key="dl_all_pitch"
+            )
+
+            sel_p = st.selectbox("🎯 選擇單球進行畫面預覽：", [p["次數"] for p in pitches], key="sel_pitch")
             p_data = next(p for p in pitches if p["次數"] == sel_p)
             prep = p_data["report"]
 
@@ -751,14 +817,11 @@ with tab_pitching:
             pc3.metric("📉 垂直位移", f"{p_data['v_break']:.1f} cm")
             pc4.metric("🏆 綜合評分", f"{prep['score']} 分")
 
-            pt_sub1, pt_sub2 = st.tabs(["📄 投手診斷報告", "🎬 投球動作回放"])
+            pt_sub1, pt_sub2 = st.tabs(["📄 單球診斷明細", "🎬 投球動作回放"])
             with pt_sub1:
                 st.markdown(f"### 🎯 投球評級：`{prep['grade']}`")
                 if p_data.get("snapshot_bytes"): st.image(p_data["snapshot_bytes"], width=400)
                 st.dataframe(prep["summary_df"], use_container_width=True)
                 for fb in prep["feedbacks"]: st.write(f"- {fb}")
-                st.download_button("📥 下載投手完整 PDF 報告", data=generate_pitcher_pdf_report(sel_p, p_data),
-                                   file_name=f"pitching_{sel_p}.pdf", mime="application/pdf", use_container_width=True,
-                                   key="dl_pitch")
             with pt_sub2:
                 st.video(p_data["video_bytes"], format="video/webm")
