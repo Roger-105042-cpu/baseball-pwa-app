@@ -32,7 +32,7 @@ from reportlab.platypus import (
 # 0. 頁面設定與模型/字型註冊 (防亂碼核心機制)
 # ==============================================================================
 st.set_page_config(
-    page_title="⚾ 棒球高階揮擊診斷與動力鏈分析系統",
+    page_title="⚾ 崇明國中棒球隊-揮擊診斷與動力鏈分析系統",
     page_icon="⚾",
     layout="wide",
 )
@@ -94,7 +94,7 @@ else:
     except:
         FONT_NAME = "Helvetica"  # 最後防線
 
-st.title("⚾ 棒球高階揮擊診斷與動力鏈分析系統")
+st.title("⚾ 崇明國中棒球隊-揮擊診斷與動力鏈分析系統")
 st.caption(
     "整合 4 大核心指標（揮棒速度、揮棒軌跡長度、攻擊仰角、擊球初速）與下半身髖關節旋轉動力鏈診斷"
 )
@@ -877,7 +877,7 @@ if st.session_state.get("is_analyzed", False):
         )
 
         tab1, tab2 = st.tabs(
-            ["📄 揮擊診斷與動力鏈修正報告", "🎬 慢動作姿態回放"]
+            ["📄 崇明國中棒球隊-揮擊診斷與動力鏈修正報告", "🎬 慢動作姿態回放"]
         )
 
         with tab1:
