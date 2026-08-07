@@ -16,6 +16,7 @@ from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import (
     HRFlowable,
@@ -40,24 +41,61 @@ MODEL_PATH = "pose_landmarker_heavy.task"
 MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_heavy/float16/latest/pose_landmarker_heavy.task"
 
 FONT_PATH = "NotoSansTC-Regular.ttf"
-FONT_URL = "https://raw.githubusercontent.com/google/fonts/main/ofl/notosanstc/NotoSansTC-Regular.ttf"
+# 使用穩定的 cdnjs CDN 連結
+FONT_URL = "https://cdnjs.cloudflare.com/ajax/libs/ink/3.1.10/fonts/Roboto/Roboto-Regular.ttf"  # 備用基礎字型
+NOTO_TC_URL = "https://fonts.gstatic.com/s/notosanstc/v35/51acWa13VoM9918E26131thXW4q8.ttf"
+
+
+def download_file_with_user_agent(url, save_path):
+    """加上 User-Agent 防阻擋的檔案下載函式"""
+    req = urllib.request.Request(
+        url,
+        headers={
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/115.0.0.0 Safari/537.36"
+            )
+        },
+    )
+    with urllib.request.urlopen(req) as response, open(
+        save_path, "wb"
+    ) as out_file:
+        out_file.write(response.read())
 
 
 @st.cache_resource
 def ensure_dependencies():
+    # 1. 確保下載 MediaPipe 模型
     if not os.path.exists(MODEL_PATH):
         with st.spinner("⏳ 首次執行，正在下載 MediaPipe 姿態識別模型..."):
-            urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
+            download_file_with_user_agent(MODEL_URL, MODEL_PATH)
 
+    # 2. 確保下載繁體中文字型 (Noto Sans TC)
     if not os.path.exists(FONT_PATH):
-        with st.spinner("⏳ 正在下載繁體中文字型 (Noto Sans TC)..."):
-            urllib.request.urlretrieve(FONT_URL, FONT_PATH)
+        try:
+            with st.spinner("⏳ 正在下載繁體中文字型 (Noto Sans TC)..."):
+                download_file_with_user_agent(NOTO_TC_URL, FONT_PATH)
+        except Exception as e:
+            st.warning(
+                f"⚠️ 繁體中文字型檔下載失敗 ({e})，PDF 將降級使用內建中文字型。"
+            )
 
 
 ensure_dependencies()
 
-# 註冊繁體中文字型，防止 PDF 亂碼
-pdfmetrics.registerFont(TTFont("NotoSansTC", FONT_PATH))
+# 註冊中文字型
+FONT_NAME = "NotoSansTC"
+if os.path.exists(FONT_PATH):
+    try:
+        pdfmetrics.registerFont(TTFont("NotoSansTC", FONT_PATH))
+    except Exception:
+        pdfmetrics.registerFont(UnicodeCIDFont("MSung-Light"))
+        FONT_NAME = "MSung-Light"
+else:
+    pdfmetrics.registerFont(UnicodeCIDFont("MSung-Light"))
+    FONT_NAME = "MSung-Light"
+
 
 st.title("⚾ 棒球高階揮擊診斷與動力鏈分析系統")
 st.caption(
@@ -320,7 +358,7 @@ def generate_advanced_diagnostics(
 
 
 def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
-    """使用 ReportLab 產出包含 TrueType 繁體中文與關鍵擊球畫面截圖之 PDF 診斷報告"""
+    """產出 PDF 診斷報告（包含防崩潰字型與關鍵擊球畫面截圖）"""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36
@@ -333,7 +371,7 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     title_style = ParagraphStyle(
         "TitleStyle",
         parent=styles["Heading1"],
-        fontName="NotoSansTC",
+        fontName=FONT_NAME,
         fontSize=18,
         leading=22,
         textColor=colors.HexColor("#1E3A8A"),
@@ -342,7 +380,7 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     subtitle_style = ParagraphStyle(
         "SubTitleStyle",
         parent=styles["Normal"],
-        fontName="NotoSansTC",
+        fontName=FONT_NAME,
         fontSize=10,
         leading=14,
         textColor=colors.HexColor("#4B5563"),
@@ -351,7 +389,7 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     section_style = ParagraphStyle(
         "SectionStyle",
         parent=styles["Heading2"],
-        fontName="NotoSansTC",
+        fontName=FONT_NAME,
         fontSize=12,
         leading=16,
         textColor=colors.HexColor("#1E3A8A"),
@@ -361,7 +399,7 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     body_style = ParagraphStyle(
         "BodyStyle",
         parent=styles["Normal"],
-        fontName="NotoSansTC",
+        fontName=FONT_NAME,
         fontSize=9,
         leading=13,
         textColor=colors.HexColor("#1F2937"),
@@ -401,7 +439,7 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E3A8A')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-        ('FONTNAME', (0, 0), (-1, -1), 'NotoSansTC'),
+        ('FONTNAME', (0, 0), (-1, -1), FONT_NAME),
         ('FONTSIZE', (0, 0), (-1, -1), 8.5),
         ('BOTTOMPADDING', (0, 0), (-1, 0), 5),
         ('TOPPADDING', (0, 0), (-1, 0), 5),
