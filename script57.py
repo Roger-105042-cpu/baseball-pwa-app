@@ -1,3 +1,4 @@
+import io
 import math
 import os
 import tempfile
@@ -9,6 +10,21 @@ import pandas as pd
 import streamlit as st
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
+
+# ReportLab 用於 PDF 報表生成
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.platypus import (
+    HRFlowable,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+    TableStyle,
+)
 
 # ==============================================================================
 # 0. 頁面設定與模型載入
@@ -292,6 +308,111 @@ def generate_advanced_diagnostics(
     }
 
 
+def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
+    """使用 ReportLab 產生專屬 PDF 診斷報告"""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36
+    )
+
+    report = event_data["report"]
+    summary_df = report["summary_df"]
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "TitleStyle",
+        parent=styles["Heading1"],
+        fontName="Helvetica-Bold",
+        fontSize=18,
+        leading=22,
+        textColor=colors.HexColor("#1E3A8A"),
+        alignment=1,
+    )
+    subtitle_style = ParagraphStyle(
+        "SubTitleStyle",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=10,
+        leading=14,
+        textColor=colors.HexColor("#4B5563"),
+        alignment=1,
+    )
+    section_style = ParagraphStyle(
+        "SectionStyle",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=12,
+        leading=16,
+        textColor=colors.HexColor("#1E3A8A"),
+        spaceBefore=10,
+        spaceAfter=5,
+    )
+    body_style = ParagraphStyle(
+        "BodyStyle",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=9,
+        leading=13,
+        textColor=colors.HexColor("#1F2937"),
+    )
+
+    elements = []
+
+    # 1. 頁眉標題區
+    elements.append(Paragraph("⚾ 棒球高階揮擊診斷與動力鏈分析報告", title_style))
+    elements.append(Paragraph(f"檢測項目：{swing_title} | 報告產出系統：Baseball Kinetic Chain Diagnostic System", subtitle_style))
+    elements.append(Spacer(1, 10))
+    elements.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#1E3A8A"), spaceAfter=10))
+
+    # 2. 綜合評分與等級區
+    score_text = f"<b>綜合動作評分：</b> {report['score']} 分 &nbsp;&nbsp;&nbsp;&nbsp; <b>等級評定：</b> {report['grade']}"
+    elements.append(Paragraph(score_text, ParagraphStyle("Score", parent=body_style, fontSize=11, textColor=colors.HexColor("#065F46"))))
+    elements.append(Spacer(1, 10))
+
+    # 3. 4 大核心數據與動力鏈表格
+    elements.append(Paragraph("📊 4 大核心指標與動力鏈實測數據", section_style))
+
+    table_data = [["核心指標", "實測數值", "標竿參考值", "診斷結果"]]
+    for _, row in summary_df.iterrows():
+        table_data.append([row["核心指標"], row["實測數值"], row["標竿參考值"], row["診斷結果"]])
+
+    t = Table(table_data, colWidths=[150, 100, 110, 180])
+    t.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E3A8A')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 6),
+        ('TOPPADDING', (0, 0), (-1, 0), 6),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F3F4F6')),
+        ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#D1D5DB')),
+    ]))
+    elements.append(t)
+    elements.append(Spacer(1, 12))
+
+    # 4. 動作修正與導引診斷
+    elements.append(Paragraph("💡 動作修正與導引診斷細節", section_style))
+    for fb in report["feedbacks"]:
+        # 移除 markdown 的 ** 加粗語法供 PDF 呈現
+        clean_fb = fb.replace("**", "")
+        elements.append(Paragraph(f"• {clean_fb}", body_style))
+        elements.append(Spacer(1, 3))
+
+    elements.append(Spacer(1, 8))
+
+    # 5. 針對性動作修正處方
+    if report["drills"]:
+        elements.append(Paragraph("🎯 針對性動作修正處方 (Recommended Drills)", section_style))
+        for drill in report["drills"]:
+            elements.append(Paragraph(f"👉 <b>建議訓練項目：</b> {drill}", ParagraphStyle("Drill", parent=body_style, textColor=colors.HexColor("#92400E"))))
+            elements.append(Spacer(1, 3))
+
+    doc.build(elements)
+    buffer.seek(0)
+    return buffer.getvalue()
+
+
 def process_frame_landmarks(
     frame: np.ndarray,
     pose_landmarks,
@@ -349,7 +470,7 @@ def process_frame_landmarks(
             cv2.line(frame, wrist_center, bat_head, (0, 165, 255), 4)
             cv2.circle(frame, bat_head, 5, (0, 255, 255), -1)
 
-    # 計算髖關節連線方向角 (0 - 180 度)
+    # 計算髖關節連線方向角
     hip_angle = 0.0
     if l_hip and r_hip:
         dx_h = r_hip[0] - l_hip[0]
@@ -452,7 +573,7 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                     history_wrist.append((frame_idx, wrist[0], wrist[1]))
                     history_hip_angles.append((frame_idx, hip_angle))
 
-            # 計算即時揮棒速度 (使用 3 幀滑動平均，減少座標抖動帶來的噪訊)
+            # 計算即時揮棒速度 (使用滑動平均)
             current_speed = 0.0
             if len(history_wrist) >= 2:
                 p1, p2 = history_wrist[-2], history_wrist[-1]
@@ -467,7 +588,6 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                     math.sqrt(dx**2 + dy**2) / dt
                 ) * 3.6 * bat_speed_factor
 
-                # 平滑化速度
                 if len(swing_frames_data) > 0:
                     prev_speeds = [
                         item["speed"] for item in swing_frames_data[-2:]
@@ -488,10 +608,7 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                 d_ang = abs(h2[1] - h1[1])
                 current_hip_speed = d_ang / dt_h
 
-            # ==============================================================================
-            # 【修復誤判與遺漏】動態優化揮棒偵測 logic
-            # ==============================================================================
-            # 適度降低啟動觸發門檻 (40% 最低門檻)，保證能正常被啟動
+            # 揮棒偵測邏輯
             start_trigger_speed = max(min_peak_speed * 0.40, 6.0)
 
             if cooldown_counter > 0:
@@ -523,7 +640,6 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                         max_speed_in_swing = current_speed
                         peak_frame_in_swing = frame_idx
 
-                    # 速度開始明顯衰減時進入減速狀態
                     if (
                         max_speed_in_swing >= (min_peak_speed * 0.7)
                         and current_speed < max_speed_in_swing * 0.6
@@ -542,7 +658,6 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                         "hip_speed": current_hip_speed,
                     })
 
-                    # 速度降至低點或超過最高幀數準備結算
                     if (
                         current_speed <= start_trigger_speed
                         or len(swing_frames_data) > 45
@@ -562,7 +677,6 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
 
                 # 結算揮棒並產出分析數據
                 if swing_state == 3:
-                    # 計算揮棒過程中手腕累積總位移
                     wrists_in_swing = [
                         item["wrist"]
                         for item in swing_frames_data
@@ -575,7 +689,6 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                             np.sqrt(np.sum(np.diff(w_pts, axis=0) ** 2, axis=1))
                         )
 
-                    # 關鍵過濾條件：最大速度達標、幀數適當、且手腕發生真實移動
                     if (
                         max_speed_in_swing >= (min_peak_speed * 0.8)
                         and len(swing_frames_data) >= 5
@@ -642,10 +755,8 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                             "video_bytes": video_bytes,
                         })
 
-                        # 冷卻時間設為 1.8 秒，足以防止收棒過程被當成第二次揮棒
                         cooldown_counter = int(fps * 1.8)
 
-                    # 重置狀態機
                     swing_state = 0
                     current_swing_trajectory = []
 
@@ -724,6 +835,19 @@ if st.session_state.get("is_analyzed", False):
                 st.subheader("🎯 針對性動作修正處方 (Recommended Drills)")
                 for drill in report["drills"]:
                     st.info(f"👉 **建議訓練：** {drill}")
+
+            st.markdown("---")
+            # ==============================================================================
+            # 【新增】下載 PDF 診斷報告按鈕
+            # ==============================================================================
+            pdf_bytes = generate_pdf_report(selected_swing_name, event)
+            st.download_button(
+                label="📥 下載完整 PDF 診斷修正報告",
+                data=pdf_bytes,
+                file_name=f"baseball_swing_report_{selected_swing_name}.pdf",
+                mime="application/pdf",
+                use_container_width=True,
+            )
 
         with tab2:
             st.video(event["video_bytes"], format="video/webm")
