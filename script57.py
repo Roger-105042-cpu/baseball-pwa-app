@@ -193,59 +193,59 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
     summary_df = report["summary_df"]
 
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle("TitleStyle", parent=styles["Heading1"], fontName=FONT_NAME, fontSize=18, leading=22,
+    title_style = ParagraphStyle("TitleStyle", parent=styles["Heading1"], fontName=FONT_NAME, fontSize=16, leading=20,
                                  textColor=colors.HexColor("#1E3A8A"), alignment=1)
-    subtitle_style = ParagraphStyle("SubTitleStyle", parent=styles["Normal"], fontName=FONT_NAME, fontSize=10,
-                                    leading=14, textColor=colors.HexColor("#4B5563"), alignment=1)
-    section_style = ParagraphStyle("SectionStyle", parent=styles["Heading2"], fontName=FONT_NAME, fontSize=12,
-                                   leading=16, textColor=colors.HexColor("#1E3A8A"), spaceBefore=10, spaceAfter=5)
-    body_style = ParagraphStyle("BodyStyle", parent=styles["Normal"], fontName=FONT_NAME, fontSize=9, leading=13,
+    subtitle_style = ParagraphStyle("SubTitleStyle", parent=styles["Normal"], fontName=FONT_NAME, fontSize=9,
+                                    leading=12, textColor=colors.HexColor("#4B5563"), alignment=1)
+    section_style = ParagraphStyle("SectionStyle", parent=styles["Heading2"], fontName=FONT_NAME, fontSize=11,
+                                   leading=14, textColor=colors.HexColor("#1E3A8A"), spaceBefore=8, spaceAfter=4)
+    body_style = ParagraphStyle("BodyStyle", parent=styles["Normal"], fontName=FONT_NAME, fontSize=8.5, leading=11.5,
                                 textColor=colors.HexColor("#1F2937"))
 
     elements = [
-        Paragraph("棒球高階揮擊診斷與動力鏈分析報告", title_style),
+        Paragraph("棒球高階打擊動力鏈完整分析報告", title_style),
         Paragraph("<b>崇明國中棒球隊</b>", subtitle_style),
         Spacer(1, 4),
         Paragraph(f"檢測項目：{swing_title} | 系統：Baseball Kinetic Chain Diagnostic", subtitle_style),
-        Spacer(1, 10),
-        HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#1E3A8A"), spaceAfter=10),
+        Spacer(1, 8),
+        HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#1E3A8A"), spaceAfter=8),
         Paragraph(
             f"<b>綜合動作評分：</b> {report['score']} 分 &nbsp;&nbsp;&nbsp;&nbsp; <b>等級評定：</b> {report['grade']}",
-            ParagraphStyle("Score", parent=body_style, fontSize=11, textColor=colors.HexColor("#065F46"))),
-        Spacer(1, 10),
+            ParagraphStyle("Score", parent=body_style, fontSize=10, textColor=colors.HexColor("#065F46"))),
+        Spacer(1, 8),
     ]
 
     if "snapshot_bytes" in event_data and event_data["snapshot_bytes"]:
         elements.append(Paragraph("關鍵峰值揮擊姿態截圖", section_style))
-        rl_img = RLImage(io.BytesIO(event_data["snapshot_bytes"]), width=380, height=213)
+        rl_img = RLImage(io.BytesIO(event_data["snapshot_bytes"]), width=300, height=168)
         rl_img.hAlign = 'CENTER'
-        elements.extend([rl_img, Spacer(1, 10)])
+        elements.extend([rl_img, Spacer(1, 8)])
 
-    elements.append(Paragraph("4 大核心指標與動力鏈實測數據", section_style))
+    elements.append(Paragraph("4 大核心指標與動力鏈實測全數數據總覽", section_style))
     table_data = [["核心指標", "實測數值", "標竿參考值", "診斷結果"]]
     for _, row in summary_df.iterrows():
         table_data.append([str(row["核心指標"]), str(row["實測數值"]), str(row["標竿參考值"]), str(row["診斷結果"])])
 
-    t = Table(table_data, colWidths=[150, 100, 110, 180])
+    t = Table(table_data, colWidths=[140, 100, 110, 190])
     t.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E3A8A')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ('FONTNAME', (0, 0), (-1, -1), FONT_NAME),
-        ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
         ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F3F4F6')),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#D1D5DB')),
     ]))
-    elements.extend([t, Spacer(1, 10), Paragraph("動作修正與導引診斷細節", section_style)])
+    elements.extend([t, Spacer(1, 8), Paragraph("完整動作診斷意見細節", section_style)])
     for fb in report["feedbacks"]:
-        elements.extend([Paragraph(f"• {fb.replace('**', '')}", body_style), Spacer(1, 2)])
+        elements.extend([Paragraph(f"• {fb.replace('**', '')}", body_style), Spacer(1, 1)])
 
     if report["drills"]:
-        elements.extend([Spacer(1, 6), Paragraph("針對性動作修正處方", section_style)])
+        elements.extend([Spacer(1, 4), Paragraph("針對性動作修正處方清單", section_style)])
         for drill in report["drills"]:
             elements.extend([Paragraph(f"建議訓練項目： {drill}", ParagraphStyle("Drill", parent=body_style,
                                                                                 textColor=colors.HexColor("#92400E"))),
-                             Spacer(1, 2)])
+                             Spacer(1, 1)])
 
     doc.build(elements)
     buffer.seek(0)
@@ -257,7 +257,6 @@ def generate_pdf_report(swing_title: str, event_data: dict) -> bytes:
 # ==============================================================================
 class PitchAnalyzer:
     def __init__(self):
-        # 定義球種設定: (IVB 垂直位移範圍 cm, H-Break 橫向位移範圍 cm)
         self.profiles = {
             "四縫線速球 (Four-Seam)": {"IVB": (15, 30), "H": (-8, 8)},
             "伸卡球/二縫線 (Sinker)": {"IVB": (-10, 10), "H": (10, 30)},
@@ -329,60 +328,60 @@ def generate_pitcher_pdf_report(pitch_title: str, event_data: dict) -> bytes:
     summary_df = report["summary_df"]
 
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle("TitleStyle", parent=styles["Heading1"], fontName=FONT_NAME, fontSize=18, leading=22,
+    title_style = ParagraphStyle("TitleStyle", parent=styles["Heading1"], fontName=FONT_NAME, fontSize=16, leading=20,
                                  textColor=colors.HexColor("#1E3A8A"), alignment=1)
-    subtitle_style = ParagraphStyle("SubTitleStyle", parent=styles["Normal"], fontName=FONT_NAME, fontSize=10,
-                                    leading=14, textColor=colors.HexColor("#4B5563"), alignment=1)
-    section_style = ParagraphStyle("SectionStyle", parent=styles["Heading2"], fontName=FONT_NAME, fontSize=12,
-                                   leading=16, textColor=colors.HexColor("#1E3A8A"), spaceBefore=10, spaceAfter=5)
-    body_style = ParagraphStyle("BodyStyle", parent=styles["Normal"], fontName=FONT_NAME, fontSize=9, leading=13,
+    subtitle_style = ParagraphStyle("SubTitleStyle", parent=styles["Normal"], fontName=FONT_NAME, fontSize=9,
+                                    leading=12, textColor=colors.HexColor("#4B5563"), alignment=1)
+    section_style = ParagraphStyle("SectionStyle", parent=styles["Heading2"], fontName=FONT_NAME, fontSize=11,
+                                   leading=14, textColor=colors.HexColor("#1E3A8A"), spaceBefore=8, spaceAfter=4)
+    body_style = ParagraphStyle("BodyStyle", parent=styles["Normal"], fontName=FONT_NAME, fontSize=8.5, leading=11.5,
                                 textColor=colors.HexColor("#1F2937"))
 
     elements = [
-        Paragraph("崇明國中棒球隊 - 投手投球與進壘軌跡分析報告", title_style),
+        Paragraph("崇明國中棒球隊 - 投手投球與進壘軌跡完整分析報告", title_style),
         Paragraph("<b>崇明國中棒球隊</b>", subtitle_style),
         Spacer(1, 4),
         Paragraph(f"檢測項目：{pitch_title} | 系統：Pitch Tracking System", subtitle_style),
-        Spacer(1, 10),
-        HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#1E3A8A"), spaceAfter=10),
+        Spacer(1, 8),
+        HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#1E3A8A"), spaceAfter=8),
         Paragraph(
             f"<b>綜合投球評分：</b> {report['score']} 分 &nbsp;&nbsp;&nbsp;&nbsp; <b>等級評定：</b> {report['grade']}",
-            ParagraphStyle("Score", parent=body_style, fontSize=11, textColor=colors.HexColor("#065F46"))),
-        Spacer(1, 10),
+            ParagraphStyle("Score", parent=body_style, fontSize=10, textColor=colors.HexColor("#065F46"))),
+        Spacer(1, 8),
     ]
 
     if "snapshot_bytes" in event_data and event_data["snapshot_bytes"]:
         elements.append(Paragraph("投球出手瞬間截圖", section_style))
-        rl_img = RLImage(io.BytesIO(event_data["snapshot_bytes"]), width=380, height=213)
+        rl_img = RLImage(io.BytesIO(event_data["snapshot_bytes"]), width=300, height=168)
         rl_img.hAlign = 'CENTER'
-        elements.extend([rl_img, Spacer(1, 10)])
+        elements.extend([rl_img, Spacer(1, 8)])
 
-    elements.append(Paragraph("投球數據與進壘軌跡總結", section_style))
+    elements.append(Paragraph("投球數據與進壘軌跡全數實測數值總結", section_style))
     table_data = [["投球核心指標", "實測數值", "標竿參考值", "診斷結果"]]
     for _, row in summary_df.iterrows():
         table_data.append(
             [str(row["投球核心指標"]), str(row["實測數值"]), str(row["標竿參考值"]), str(row["診斷結果"])])
 
-    t = Table(table_data, colWidths=[140, 120, 110, 180])
+    t = Table(table_data, colWidths=[130, 110, 110, 190])
     t.setStyle(TableStyle([
         ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1E3A8A')),
         ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
         ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
         ('FONTNAME', (0, 0), (-1, -1), FONT_NAME),
-        ('FONTSIZE', (0, 0), (-1, -1), 8.5),
+        ('FONTSIZE', (0, 0), (-1, -1), 8),
         ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#F3F4F6')),
         ('GRID', (0, 0), (-1, -1), 0.5, colors.HexColor('#D1D5DB')),
     ]))
-    elements.extend([t, Spacer(1, 10), Paragraph("投球動作診斷細節", section_style)])
+    elements.extend([t, Spacer(1, 8), Paragraph("投球動作全數診斷細節", section_style)])
     for fb in report["feedbacks"]:
-        elements.extend([Paragraph(f"• {fb.replace('**', '')}", body_style), Spacer(1, 2)])
+        elements.extend([Paragraph(f"• {fb.replace('**', '')}", body_style), Spacer(1, 1)])
 
     if report["drills"]:
-        elements.extend([Spacer(1, 6), Paragraph("針對性訓練處方", section_style)])
+        elements.extend([Spacer(1, 4), Paragraph("針對性訓練處方清單", section_style)])
         for drill in report["drills"]:
             elements.extend([Paragraph(f"建議項目： {drill}", ParagraphStyle("Drill", parent=body_style,
                                                                             textColor=colors.HexColor("#92400E"))),
-                             Spacer(1, 2)])
+                             Spacer(1, 1)])
 
     doc.build(elements)
     buffer.seek(0)
@@ -611,7 +610,7 @@ with tab_batting:
                 if ev_data.get("snapshot_bytes"): st.image(ev_data["snapshot_bytes"], width=400)
                 st.dataframe(rep["summary_df"], use_container_width=True)
                 for fb in rep["feedbacks"]: st.write(f"- {fb}")
-                st.download_button("📥 下載打擊 PDF 報告", data=generate_pdf_report(sel_s, ev_data),
+                st.download_button("📥 下載打擊完整 PDF 報告", data=generate_pdf_report(sel_s, ev_data),
                                    file_name=f"batting_{sel_s}.pdf", mime="application/pdf", use_container_width=True,
                                    key="dl_bat")
             with t_sub2:
@@ -758,7 +757,7 @@ with tab_pitching:
                 if p_data.get("snapshot_bytes"): st.image(p_data["snapshot_bytes"], width=400)
                 st.dataframe(prep["summary_df"], use_container_width=True)
                 for fb in prep["feedbacks"]: st.write(f"- {fb}")
-                st.download_button("📥 下載投手 PDF 報告", data=generate_pitcher_pdf_report(sel_p, p_data),
+                st.download_button("📥 下載投手完整 PDF 報告", data=generate_pitcher_pdf_report(sel_p, p_data),
                                    file_name=f"pitching_{sel_p}.pdf", mime="application/pdf", use_container_width=True,
                                    key="dl_pitch")
             with pt_sub2:
