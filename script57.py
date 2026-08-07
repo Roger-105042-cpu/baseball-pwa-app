@@ -11,10 +11,10 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
 # ==============================================================================
-# 0. 頁面設定與 MediaPipe 模型自動下載機制
+# 0. 頁面設定與 MediaPipe 模型下載
 # ==============================================================================
 st.set_page_config(
-    page_title="崇明國中-棒球揮棒動作姿態與初速分析系統",
+    page_title="崇明國中-棒球揮棒姿態與 Kinovea 式仰角分析系統",
     page_icon="⚾",
     layout="wide",
 )
@@ -25,66 +25,80 @@ MODEL_URL = "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pos
 
 @st.cache_resource
 def ensure_model_file():
-    """自動檢測並下載 MediaPipe 缺失的模型檔"""
     if not os.path.exists(MODEL_PATH):
-        with st.spinner("⏳ 首次於雲端執行，正在從官方下載 MediaPipe 模型檔..."):
+        with st.spinner("⏳ 下載 MediaPipe 核心分析模型檔..."):
             urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
 
 
 ensure_model_file()
 
-st.title("⚾ 棒球揮棒動作姿態與初速分析系統")
+st.title("⚾ 崇明國中-棒球揮棒姿態與 Kinovea 式仰角校正系統")
 st.caption(
-    "基於 MediaPipe Pose Landmarker 之 AI 骨架偵測、靈敏度可調與慢動作回放"
+    "結合 Kinovea 地平基準線校正、自訂實體長度標定與 AI 骨架軌跡追蹤"
 )
 
 # ==============================================================================
-# 1. 側邊欄：動態參數調控 (解決初速不足與偵測不到的問題)
+# 1. 側邊欄：Kinovea 式水平線與實體尺寸校正
 # ==============================================================================
 with st.sidebar:
-    st.header("⚙️ 偵測靈敏度與距離校正")
+    st.header("📐 Kinovea 角度與物理校正")
 
-    st.subheader("1. 距離與比例校正")
+    st.subheader("1. 地平線與相機傾斜校正")
+    manual_horizon_offset = st.slider(
+        "🎯 地平線角度微調 (度)",
+        min_value=-20.0,
+        max_value=20.0,
+        value=0.0,
+        step=0.5,
+        help="如畫面相機傾斜，可手動微調此數值，使綠色基準線對齊地面或圍欄。",
+    )
+
+    st.subheader("2. 實體長度標定 (Scale)")
+    real_bat_meters = st.number_input(
+        "🏏 球棒實際長度 (公尺)",
+        min_value=0.5,
+        max_value=1.1,
+        value=0.84,
+        step=0.01,
+        help="一般成人球棒約 0.84m (33吋)，青少棒約 0.75m~0.80m。",
+    )
+
     meters_per_pixel = st.slider(
-        "📐 1 像素代表公尺數 (Meters/PX)",
+        "📏 像素轉公尺比例 (Meters/PX)",
         min_value=0.0010,
         max_value=0.0080,
-        value=0.0032,
-        step=0.0002,
-        help="如果影片拍得很遠（人很小），請調大此數值（例如 0.004~0.005）；如果拍得很近，請調小。",
+        value=0.0030,
+        step=0.0001,
     )
 
     bat_speed_factor = st.slider(
-        "🚀 手腕轉棒頭速度放大係數",
+        "🚀 手腕至棒頭速度倍率",
         min_value=1.0,
         max_value=2.0,
         value=1.35,
         step=0.05,
     )
 
-    st.subheader("2. 揮棒判定門檻")
+    st.subheader("3. 偵測靈敏度門檻")
     min_peak_speed = st.slider(
-        "⚡ 最低有效峰值初速 (km/h)",
+        "⚡ 最低有效初速 (km/h)",
         min_value=10.0,
         max_value=50.0,
         value=15.0,
-        step=2.0,
-        help="低於此速度的動作不會被紀錄。如常漏抓，請將此數值調低（如 12~15 km/h）。",
+        step=1.0,
     )
 
     min_total_travel = st.slider(
-        "📏 最低手腕總位移量 (像素)",
+        "📏 手腕最低總位移 (像素)",
         min_value=10,
         max_value=100,
-        value=25,
+        value=20,
         step=5,
-        help="手腕移動距離需超過此像素才會結算為一次揮棒。",
     )
 
     st.markdown("---")
-    bat_length_px = 110  # 棒頭延伸像素長度
-    frame_skip_step = 1  # 逐幀分析
-    target_width = 800  # 圖像縮放最大寬度
+    bat_length_px = 110
+    target_width = 800
 
     if st.button("🔄 重置並重新分析", use_container_width=True):
         st.session_state.is_analyzed = False
@@ -93,59 +107,95 @@ with st.sidebar:
 
 
 # ==============================================================================
-# 2. 輔助運算、水平線繪製與仰角校正函式
+# 2. 核心幾何運算與 Kinovea 繪圖函式
 # ==============================================================================
-def calculate_horizon_angle(landmarks, width, height):
-    """利用肩膀或腳踝連線估算相機傾斜角度 (地平線角度)"""
+def calculate_auto_horizon(landmarks, width, height):
+    """偵測兩肩角度作為自動地平線基礎"""
     if not landmarks:
         return 0.0
+    l_s = landmarks[11] if len(landmarks) > 11 else None
+    r_s = landmarks[12] if len(landmarks) > 12 else None
 
-    l_shoulder = landmarks[11] if len(landmarks) > 11 else None
-    r_shoulder = landmarks[12] if len(landmarks) > 12 else None
-
-    if (
-        l_shoulder
-        and r_shoulder
-        and l_shoulder.visibility > 0.5
-        and r_shoulder.visibility > 0.5
-    ):
-        dx = (r_shoulder.x - l_shoulder.x) * width
-        dy = (r_shoulder.y - l_shoulder.y) * height
+    if l_s and r_s and l_s.visibility > 0.5 and r_s.visibility > 0.5:
+        dx = (r_s.x - l_s.x) * width
+        dy = (r_s.y - l_s.y) * height
         return math.degrees(math.atan2(dy, dx))
     return 0.0
 
 
-def draw_reference_lines(frame, wrist_pos, horizon_angle):
-    """在畫面上繪製水平參考線與角度軸線"""
-    if wrist_pos:
-        cx, cy = wrist_pos
-        rad = math.radians(horizon_angle)
-        dx = int(500 * math.cos(rad))
-        dy = int(500 * math.sin(rad))
+def draw_kinovea_protractor(frame, wrist_pos, total_horizon_angle):
+    """繪製 Kinovea 風格的地平線、垂直軸線與最佳擊球仰角扇形區域 (15°-35°)"""
+    if not wrist_pos:
+        return
 
-        p1 = (cx - dx, cy - dy)
-        p2 = (cx + dx, cy + dy)
-        cv2.line(frame, p1, p2, (255, 255, 0), 1, cv2.LINE_AA)
+    cx, cy = wrist_pos
+    rad = math.radians(total_horizon_angle)
 
-        p3 = (cx + dy, cy - dx)
-        p4 = (cx - dy, cy + dx)
-        cv2.line(frame, p3, p4, (255, 0, 255), 1, cv2.LINE_AA)
+    # 1. 地平基準線 (綠色實線)
+    dx = int(600 * math.cos(rad))
+    dy = int(600 * math.sin(rad))
+    cv2.line(
+        frame,
+        (cx - dx, cy - dy),
+        (cx + dx, cy + dy),
+        (0, 255, 0),
+        2,
+        cv2.LINE_AA,
+    )
 
-        cv2.putText(
-            frame,
-            "0 deg (Horizon)",
-            (cx + 60, cy - 5),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.4,
-            (255, 255, 0),
-            1,
-        )
+    # 2. 鉛直 90 度軸線 (紫色虛線)
+    p_up = (cx + dy, cy - dx)
+    p_down = (cx - dy, cy + dx)
+    cv2.line(frame, p_up, p_down, (255, 0, 255), 1, cv2.LINE_AA)
+
+    # 3. 繪製甜蜜擊球仰角區間扇形 (15° 到 35°)
+    overlay = frame.copy()
+    radius = 120
+
+    # 轉為 OpenCV 角度定義 (Y 軸向下)
+    start_ang = -(total_horizon_angle + 35)
+    end_ang = -(total_horizon_angle + 15)
+
+    cv2.ellipse(
+        overlay,
+        (cx, cy),
+        (radius, radius),
+        0,
+        start_ang,
+        end_ang,
+        (0, 215, 255),
+        -1,
+    )
+    cv2.addWeighted(overlay, 0.25, frame, 0.75, 0, frame)
+
+    # 標籤文字
+    cv2.putText(
+        frame,
+        f"0 deg Horizon ({total_horizon_angle:.1f}deg)",
+        (cx + 80, cy - 8),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.45,
+        (0, 255, 0),
+        1,
+        cv2.LINE_AA,
+    )
+    cv2.putText(
+        frame,
+        "Sweet Spot (15-35 deg)",
+        (cx + 60, cy - 45),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.4,
+        (0, 215, 255),
+        1,
+        cv2.LINE_AA,
+    )
 
 
-def process_frame(frame, pose_landmarks, width, height, bat_length):
-    """提取 MediaPipe 關鍵點並繪製骨架與延伸棒頭"""
+def process_frame(
+    frame, pose_landmarks, width, height, bat_length, manual_offset
+):
     if not pose_landmarks:
-        return None, None, None, None, 0.0
+        return None, None, None, 0.0
 
     landmarks = pose_landmarks[0]
 
@@ -160,7 +210,9 @@ def process_frame(frame, pose_landmarks, width, height, bat_length):
     l_wrist = get_coords(15)
     r_wrist = get_coords(16)
 
-    horizon_angle = calculate_horizon_angle(landmarks, width, height)
+    # 計算總地平線角度 = 自動骨架角度 + 手動微調值
+    auto_angle = calculate_auto_horizon(landmarks, width, height)
+    total_horizon_angle = auto_angle + manual_offset
 
     if l_shoulder and r_shoulder:
         cv2.line(frame, l_shoulder, r_shoulder, (255, 255, 255), 2)
@@ -194,19 +246,14 @@ def process_frame(frame, pose_landmarks, width, height, bat_length):
             cv2.line(frame, wrist_center, bat_head, (0, 165, 255), 4)
             cv2.circle(frame, bat_head, 5, (0, 255, 255), -1)
 
+    # 畫上 Kinovea 量角規
     if wrist_center:
-        draw_reference_lines(frame, wrist_center, horizon_angle)
+        draw_kinovea_protractor(frame, wrist_center, total_horizon_angle)
 
-    shoulder_mid = (
-        (l_shoulder[0] + r_shoulder[0]) / 2
-        if (l_shoulder and r_shoulder)
-        else (0, 0)
-    )
-    return shoulder_mid, wrist_center, bat_head, shoulder_mid, horizon_angle
+    return wrist_center, bat_head, total_horizon_angle
 
 
 def save_swing_clip(frames, fps, width, height, output_path):
-    """將揮棒片段寫入 WebM 影音檔"""
     fourcc = cv2.VideoWriter_fourcc(*"VP80")
     out = cv2.VideoWriter(output_path, fourcc, fps, (width, height))
     for f in frames:
@@ -216,7 +263,7 @@ def save_swing_clip(frames, fps, width, height, output_path):
 
 
 # ==============================================================================
-# 3. Session 狀態初始化與上傳元件
+# 3. Session 狀態與介面建立
 # ==============================================================================
 if "swing_events" not in st.session_state:
     st.session_state.swing_events = []
@@ -237,7 +284,7 @@ if uploaded_file is not None:
         st.session_state.is_analyzed = False
 
 # ==============================================================================
-# 4. 核心運算區
+# 4. 核心分析與 Kinovea 仰角計算
 # ==============================================================================
 if uploaded_file is not None and not st.session_state.is_analyzed:
     tfile = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
@@ -258,13 +305,13 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
         proc_width = orig_width
         proc_height = orig_height
 
-    st.markdown("### 📹 全程動態分析中...")
+    st.markdown("### 📹 Kinovea 圖像分析與水平校正中...")
     st_frame = st.empty()
     progress_bar = st.progress(0)
 
     history_wrist = []
     current_swing_trajectory = []
-    swing_state = 0  # 0: 準備, 1: 揮棒中, 2: 減速中, 3: 觸發結算
+    swing_state = 0
     swing_frames_data = []
     swing_raw_frames = []
     max_speed_in_swing = 0.0
@@ -296,13 +343,15 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
             if frame_idx % 10 == 0:
                 progress_bar.progress(min(frame_idx / total_frames, 1.0))
 
-            if scale != 1.0:
-                frame_resized = cv2.resize(
-                    frame, (proc_width, proc_height), interpolation=cv2.INTER_AREA
+            frame_resized = (
+                cv2.resize(
+                    frame,
+                    (proc_width, proc_height),
+                    interpolation=cv2.INTER_AREA,
                 )
-            else:
-                frame_resized = frame.copy()
-
+                if scale != 1.0
+                else frame.copy()
+            )
             annotated_frame = frame_resized.copy()
             rgb_frame = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
             mp_image = mp.Image(
@@ -314,17 +363,16 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
 
             current_wrist = None
             current_bat_head = None
-            horizon_angle = 0.0
+            total_horizon = 0.0
 
             if result.pose_landmarks:
-                com, wrist, bat_head, shoulder_mid, horizon_angle = (
-                    process_frame(
-                        annotated_frame,
-                        result.pose_landmarks,
-                        proc_width,
-                        proc_height,
-                        bat_length_px,
-                    )
+                wrist, bat_head, total_horizon = process_frame(
+                    annotated_frame,
+                    result.pose_landmarks,
+                    proc_width,
+                    proc_height,
+                    bat_length_px,
+                    manual_horizon_offset,
                 )
                 if wrist:
                     current_wrist = wrist
@@ -347,7 +395,6 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
             if cooldown_counter > 0:
                 cooldown_counter -= 1
 
-            # 起始觸發門檻為峰值門檻的 35%
             start_trigger_speed = min_peak_speed * 0.35
 
             if cooldown_counter == 0:
@@ -369,7 +416,7 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
                         "wrist": current_wrist,
                         "bat_head": current_bat_head,
                         "speed": current_speed,
-                        "horizon": horizon_angle,
+                        "horizon": total_horizon,
                     })
 
                     if current_speed > max_speed_in_swing:
@@ -398,34 +445,32 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
                         "wrist": current_wrist,
                         "bat_head": current_bat_head,
                         "speed": current_speed,
-                        "horizon": horizon_angle,
+                        "horizon": total_horizon,
                     })
 
                     if (
                         current_speed <= start_trigger_speed * 0.8
                         or len(swing_frames_data) > 35
                     ):
-                        # 改為計算「總平面位移 (X + Y)」避免斜角度漏抓
                         x_coords = [
                             item["wrist"][0]
                             for item in swing_frames_data
-                            if item["wrist"] is not None
+                            if item["wrist"]
                         ]
                         y_coords = [
                             item["wrist"][1]
                             for item in swing_frames_data
-                            if item["wrist"] is not None
+                            if item["wrist"]
                         ]
 
-                        total_displacement = 0
+                        total_disp = 0
                         if x_coords and y_coords:
-                            dx_total = max(x_coords) - min(x_coords)
-                            dy_total = max(y_coords) - min(y_coords)
-                            total_displacement = math.sqrt(
-                                dx_total**2 + dy_total**2
+                            total_disp = math.sqrt(
+                                (max(x_coords) - min(x_coords)) ** 2
+                                + (max(y_coords) - min(y_coords)) ** 2
                             )
 
-                        if total_displacement >= min_total_travel:
+                        if total_disp >= min_total_travel:
                             swing_state = 3
                         else:
                             swing_state = 0
@@ -443,7 +488,7 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
                 if swing_state in [1, 2]:
                     swing_raw_frames.append(annotated_frame.copy())
 
-                # 結算本次揮棒
+                # 結算本次揮棒仰角 (Kinovea 相對角度計算)
                 if swing_state == 3:
                     launch_angle = 0.0
                     peak_sub_idx = [
@@ -540,33 +585,28 @@ if uploaded_file is not None and not st.session_state.is_analyzed:
     st_frame.empty()
     progress_bar.empty()
 
-    # 將數據寫入持久 State
     st.session_state.swing_events = detected_events
     st.session_state.is_analyzed = True
     st.rerun()
 
 # ==============================================================================
-# 5. 揮棒結果展示區
+# 5. 結果展現
 # ==============================================================================
 if st.session_state.is_analyzed:
     events = st.session_state.swing_events
 
     if not events:
         st.warning(
-            "⚠️ 影片分析完成，但未偵測到揮棒動作。請嘗試在左側邊欄：\n"
-            "1. 將【最低有效峰值初速】調低（例如降至 12~15 km/h）\n"
-            "2. 將【1 像素代表公尺數】調大（例如調至 0.0040~0.0050）\n"
-            "3. 點擊【重置並重新分析】。"
+            "⚠️ 未偵測到有效揮棒。請嘗試調低【最低有效初速】或微調【像素轉公尺比例】。"
         )
     else:
-        st.success(f"✅ 分析完成！一共偵測出 {len(events)} 次有效揮棒。")
+        st.success(f"✅ 分析完成！共偵測到 {len(events)} 次揮棒。")
 
         option_list = [e["次數"] for e in events]
         selected_swing_name = st.selectbox(
-            "🎯 請選擇要查看與回放的揮棒次數：",
+            "🎯 選擇揮棒次數：",
             options=option_list,
             index=len(option_list) - 1,
-            key="swing_selector",
         )
 
         selected_event = next(
@@ -576,41 +616,17 @@ if st.session_state.is_analyzed:
         st.markdown("---")
         col1, col2, col3, col4 = st.columns(4)
         col1.metric("⚡ 估算初速", selected_event["初速"])
-        col2.metric("📐 地平校正仰角", selected_event["仰角"])
+        col2.metric("📐 校正後仰角", selected_event["仰角"])
         col3.metric("⏱️ 揮棒耗時", selected_event["耗時"])
         col4.metric("🎞️ 記錄點數", f"{selected_event['total_frames']} 點")
 
-        tab1, tab2 = st.tabs(["🎬 慢動作影片回放", "📊 該次揮棒獨立數據表"])
+        tab1, tab2 = st.tabs(["🎬 Kinovea 回放 (含基準線/扇形區)", "📊 數據明細表"])
 
         with tab1:
-            st.markdown(f"#### 🎬 {selected_event['次數']} 慢動作回放")
+            st.markdown(
+                f"#### 🎬 {selected_event['次數']} - 慢動作與綠色地平線/黃色 15°-35° 甜蜜角區域"
+            )
             st.video(selected_event["video_bytes"], format="video/webm")
 
         with tab2:
-            st.markdown(
-                f"#### 📋 {selected_event['次數']} - 逐幀速度與軌跡詳細數據表"
-            )
-            st.dataframe(
-                selected_event["detailed_df"],
-                use_container_width=True,
-                height=300,
-            )
-            csv_data = (
-                selected_event["detailed_df"]
-                .to_csv(index=False)
-                .encode("utf-8-sig")
-            )
-            st.download_button(
-                label=f"📥 下載 {selected_event['次數']} 數據明細 (CSV)",
-                data=csv_data,
-                file_name=f"{selected_event['次數']}_detail.csv",
-                mime="text/csv",
-            )
-
-        st.markdown("---")
-        with st.expander("📊 查看所有歷史揮棒數據彙整表"):
-            df_all = pd.DataFrame(events)[
-                ["次數", "初速", "仰角", "耗時", "total_frames"]
-            ]
-            df_all.columns = ["次數", "初速", "仰角", "耗時", "記錄點數"]
-            st.dataframe(df_all, use_container_width=True)
+            st.dataframe(selected_event["detailed_df"], use_container_width=True)
