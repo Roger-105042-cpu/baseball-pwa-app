@@ -11,7 +11,7 @@ from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
 # ==============================================================================
-# 0. 頁面設定與模型載入
+# 0. 系統與 MediaPipe Pose Landmarker 模型配置
 # ==============================================================================
 st.set_page_config(
     page_title="⚾ 棒球高階揮擊診斷與動力鏈分析系統",
@@ -34,11 +34,11 @@ ensure_model_file()
 
 st.title("⚾ 棒球高階揮擊診斷與動力鏈分析系統")
 st.caption(
-    "整合 4 大核心指標（揮棒速度、軌跡長度、攻擊仰角、擊球初速）與下半身髖關節旋轉動力鏈診斷"
+    "整合 4 大核心參考數據（揮棒速度、軌跡長度、攻擊仰角、擊球初速）與下半身骨盆轉動動力鏈診斷"
 )
 
 # ==============================================================================
-# 1. 側邊欄控制項
+# 1. 側邊欄控制項：標定與門檻參數
 # ==============================================================================
 with st.sidebar:
     st.header("⚙️ 系統與物理參數標定")
@@ -49,7 +49,7 @@ with st.sidebar:
         20.0,
         0.0,
         0.5,
-        help="修正拍攝傾斜角度，維持絕對地平線基準。",
+        help="修正拍攝傾斜角度，維護畫面絕對地平線基準。",
     )
 
     meters_per_pixel = st.slider(
@@ -58,7 +58,7 @@ with st.sidebar:
         0.0080,
         0.0032,
         0.0001,
-        help="標定空間距離，影響速度與軌跡長度計算。",
+        help="標定空間距離，影響揮棒速度與軌跡長度計算。",
     )
 
     bat_speed_factor = st.slider(
@@ -83,7 +83,7 @@ with st.sidebar:
         st.rerun()
 
 # ==============================================================================
-# 2. 幾何演算法與核心診斷引擎
+# 2. 幾何計算與 4 大指標 / 轉動診斷模組
 # ==============================================================================
 
 
@@ -98,14 +98,14 @@ def calculate_attack_angle_and_length(
 
     pts = np.array(bat_trajectory, dtype=np.float64)
 
-    # 1. 計算累積揮棒軌跡長度 (Swing Length)
+    # 1. 揮棒軌跡長度 (Swing Length)：從啟動到擊球點移點的累積實體距離 (公尺)
     diffs = np.diff(pts, axis=0)
     dist_px = np.sum(np.sqrt(np.sum(diffs**2, axis=1)))
     swing_length_m = dist_px * m_per_px
 
-    # 2. 擊球前攻擊仰角擬合 (微向上揚進球區)
+    # 2. 攻擊仰角 (Attack Angle)：球棒迎向擊球區的傾斜角度
     x = pts[:, 0]
-    y_phys = -pts[:, 1]  # Y軸轉為物理向上為正
+    y_phys = -pts[:, 1]  # 轉為物理座標 (向上為正)
 
     x_dir = 1.0 if x[-1] >= x[0] else -1.0
     x_rel = (x - x[0]) * x_dir
@@ -134,90 +134,90 @@ def generate_advanced_diagnostics(
     hip_rot_speed: float,
     r_squared: float,
 ) -> dict:
-    """整合 4 大指標與下半身轉動動力鏈之自動化報告引擎"""
+    """整合 4 大指標與動作修正方向（軌跡改善、下半身轉動強化）之自動化診斷報告"""
     score = 100
     feedbacks = []
     drills = []
 
-    # 1. 揮棒速度 (Bat Speed)
+    # 1. 揮棒速度 (Bat Speed) 診斷
     if bat_speed >= 28.0:
         bat_speed_status = "✅ 爆發力佳"
         feedbacks.append(
-            f"揮棒速度 **{bat_speed:.1f} km/h**，棒頭通過本壘板具備良好加速力。"
+            f"揮棒速度 **{bat_speed:.1f} km/h**，棒頭通過本壘板前緣具備足夠速率與擊球貫穿力。"
         )
     else:
         bat_speed_status = "⚠️ 速度偏低"
         feedbacks.append(
-            f"揮棒速度 **{bat_speed:.1f} km/h**，揮棒爆發力未完全釋放。"
+            f"揮棒速度 **{bat_speed:.1f} km/h**，揮棒速度不足會直接影響擊球距離與遠度。"
         )
         score -= 10
 
-    # 2. 揮棒軌跡長度 (Swing Length)
+    # 2. 揮棒軌跡長度 (Swing Length) 診斷 (修正方向：改善軌跡)
     if 0.65 <= swing_length <= 0.95:
         length_status = "✅ 軌跡緊湊敏捷"
         feedbacks.append(
-            f"揮棒軌跡長度 **{swing_length:.2f} m**，出棒簡潔，能有效應對高振幅速球。"
+            f"揮棒軌跡長度 **{swing_length:.2f} m**，從啟動到擊球點路徑簡潔，能有效應對高振幅速球。"
         )
     elif swing_length > 0.95:
         length_status = "⚠️ 軌跡過長 (繞大圈)"
         feedbacks.append(
-            f"揮棒軌跡達 **{swing_length:.2f} m** (建議 < 0.95m)，揮棒有過度拉棒或繞大圈現象，會降低反應時間。"
+            f"揮棒軌跡長達 **{swing_length:.2f} m** (標竿 < 0.95m)，揮棒路徑過長或繞大圈，會大幅降低面對高速球的反應容錯率。"
         )
         score -= 15
         drills.append("貼牆揮棒路徑收束訓練 (Wall Drill)")
     else:
         length_status = "⚠️ 揮棒延伸不足"
         feedbacks.append(
-            f"揮棒軌跡僅 **{swing_length:.2f} m**，推棒較多，影響擊球後段延伸。"
+            f"揮棒軌跡僅 **{swing_length:.2f} m**，手臂過早收縮，影響擊球後段貫穿力與延伸。"
         )
 
-    # 3. 攻擊仰角 (Attack Angle)
+    # 3. 攻擊仰角 (Attack Angle) 診斷 (修正方向：改善軌跡)
     if 6.0 <= attack_angle <= 18.0:
-        attack_status = "✅ 完美切入 (微向上揚)"
+        attack_status = "✅ 完美迎球切入"
         feedbacks.append(
-            f"攻擊仰角 **{attack_angle:.1f}°**，精確迎向來球軌跡，易創造強勁平飛球。"
+            f"攻擊仰角 **{attack_angle:.1f}°**，球棒精確切入擊球區，有利於創造強勁平飛球。"
         )
     elif attack_angle < 6.0:
-        attack_status = "⚠️ 角度過陡/砍擊"
+        attack_status = "⚠️ 角度過陡 (由上往下砍)"
         feedbacks.append(
-            f"攻擊仰角為 **{attack_angle:.1f}°** (過陡/由上往下砍)，會縮小擊球容錯區間，易形成弱勢滾地球。"
+            f"攻擊仰角僅 **{attack_angle:.1f}°**，揮棒角度過陡（由上往下砍），會嚴重縮小擊球容錯區間，且極易打成無力滾地球或揮空。"
         )
         score -= 15
         drills.append("高低位置擊球座高角掃擊練習 (Elevated Tee Work)")
     else:
         attack_status = "⚠️ 倒棒/過度仰角"
         feedbacks.append(
-            f"攻擊仰角達 **{attack_angle:.1f}°**，過度仰角易形成無效高飛球。"
+            f"攻擊仰角達 **{attack_angle:.1f}°**，過度仰角容易造成倒棒並打成無效高飛球。"
         )
         score -= 15
         drills.append("水平平飛擊球修正 (Level Swing Progression)")
 
-    # 4. 擊球初速 (Exit Velocity)
+    # 4. 擊球初速 (Exit Velocity) 診斷
     if exit_velocity >= 25.0:
         exit_status = "✅ 力量扎實轉化"
         feedbacks.append(
-            f"預估擊球初速 **{exit_velocity:.1f} km/h**，揮棒動能扎實傳遞至球體。"
+            f"預估擊球初速 **{exit_velocity:.1f} km/h**，展現揮棒力量扎實轉化為實際破壞力的效率。"
         )
     else:
         exit_status = "⚠️ 動能轉化待提升"
         feedbacks.append(
-            f"擊球初速 **{exit_velocity:.1f} km/h**，建議優化擊球甜蜜點對齊。"
+            f"預估擊球初速 **{exit_velocity:.1f} km/h**，揮棒動能傳遞至球體的轉化效率需補強。"
         )
         score -= 10
 
-    # 5. 動作修正重點：動力鏈與髖關節旋轉 (Hip Rotation Speed)
+    # 5. 動力鏈與轉动強化診斷 (修正方向：強化後髖關節與骨盆旋轉)
     if hip_rot_speed >= 280.0:
         hip_status = "✅ 骨盆轉動爆發力強"
         feedbacks.append(
-            f"髖關節峰值轉速達 **{hip_rot_speed:.0f} deg/s**，下半身主動發力導引良好。"
+            f"髖關節峰值轉速達 **{hip_rot_speed:.0f} deg/s**，展現優秀的後髖關節與骨盆旋轉帶動。"
         )
     else:
-        hip_status = "⚠️ 下半身導引不足"
+        hip_status = "⚠️ 下半身轉動引導不足"
         feedbacks.append(
-            f"髖關節峰值轉速僅 **{hip_rot_speed:.0f} deg/s**，下半身轉動力量未能完整由下而上傳遞至手腕與棒頭。"
+            f"髖關節峰值轉速僅 **{hip_rot_speed:.0f} deg/s**，下半身轉動發力不足，未能將力量由下而上完整傳遞至手腕與棒頭。"
         )
         score -= 15
-        drills.append("後髖關節爆發力旋轉彈力帶訓練 (Hip Hinge Band Rotation)")
+        drills.append("後髖關節爆發力旋轉彈力帶訓練 (Hip-Hinge Band Rotation)")
 
     # 6. 等級評定
     score = max(0, score)
@@ -231,7 +231,7 @@ def generate_advanced_diagnostics(
         grade = "C (基礎動作需調整)"
 
     summary_df = pd.DataFrame({
-        "核心指標": [
+        "核心參考指標": [
             "揮棒速度 (Bat Speed)",
             "揮棒軌跡長度 (Swing Length)",
             "攻擊仰角 (Attack Angle)",
@@ -247,7 +247,7 @@ def generate_advanced_diagnostics(
             f"{hip_rot_speed:.0f} deg/s",
             f"{r_squared:.2f}",
         ],
-        "標竿參考值": [
+        "標竿參考標準": [
             "> 28.0 km/h",
             "0.65 - 0.95 m",
             "6.0° - 18.0°",
@@ -255,7 +255,7 @@ def generate_advanced_diagnostics(
             "> 280 deg/s",
             "> 0.88",
         ],
-        "診斷結果": [
+        "診斷評定": [
             bat_speed_status,
             length_status,
             attack_status,
@@ -281,7 +281,7 @@ def process_frame_landmarks(
     height: int,
     bat_length: int,
 ):
-    """擷取關節座標、計算髖關節夾角與手腕/棒頭位置"""
+    """擷取關節座標、計算髖關節連線角度與手腕/棒頭位置"""
     if not pose_landmarks:
         return None, None, None
 
@@ -300,7 +300,7 @@ def process_frame_landmarks(
     l_wrist = get_coords(15)
     r_wrist = get_coords(16)
 
-    # 繪製肩線與骨盆線
+    # 繪製肩線與骨盆旋轉基準線
     if l_shoulder and r_shoulder:
         cv2.line(frame, l_shoulder, r_shoulder, (255, 255, 255), 2)
     if l_hip and r_hip:
@@ -331,7 +331,7 @@ def process_frame_landmarks(
             cv2.line(frame, wrist_center, bat_head, (0, 165, 255), 4)
             cv2.circle(frame, bat_head, 5, (0, 255, 255), -1)
 
-    # 計算髖關節連線方向角 (0 - 180 度)
+    # 計算髖關節角度
     hip_angle = 0.0
     if l_hip and r_hip:
         dx_h = r_hip[0] - l_hip[0]
@@ -342,7 +342,7 @@ def process_frame_landmarks(
 
 
 # ==============================================================================
-# 3. 主程序：影片分析與姿態偵測
+# 3. 影片分析與偵測主程式
 # ==============================================================================
 uploaded_file = st.file_uploader(
     "📁 請上傳揮棒側拍影片 (MP4 / MOV / AVI)", type=["mp4", "avi", "mov", "m4v"]
@@ -367,7 +367,7 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
     proc_width = int(orig_width * scale)
     proc_height = int(orig_height * scale)
 
-    st.markdown("### 📹 進行 4 大指標與動力鏈姿態分析中...")
+    st.markdown("### 📹 全程 4 大數據與動力鏈旋轉姿態分析中...")
     st_frame = st.empty()
     progress_bar = st.progress(0)
 
@@ -527,7 +527,7 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                 if swing_state in [1, 2]:
                     swing_raw_frames.append(annotated_frame.copy())
 
-                # 結算揮棒並產出分析數據
+                # 結算揮棒並進行數據診斷
                 if swing_state == 3:
                     fit_pts = [
                         item["bat_head"]
@@ -544,9 +544,7 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                     )
 
                     bat_speed = max_speed_in_swing
-                    exit_velocity = (
-                        bat_speed * 1.15
-                    )  # 依揮棒動能換算預估初速
+                    exit_velocity = bat_speed * 1.15  # 依動能轉化換算預估初速
                     peak_hip_speed = max(
                         [item["hip_speed"] for item in swing_frames_data]
                         + [0.0]
@@ -566,7 +564,6 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
                         clip_dir, f"swing_{swing_num}.webm"
                     )
 
-                    # 儲存短影片
                     fourcc = cv2.VideoWriter_fourcc(*"VP80")
                     out = cv2.VideoWriter(
                         clip_filename,
@@ -611,32 +608,38 @@ if uploaded_file is not None and not st.session_state.get("is_analyzed", False):
     st.rerun()
 
 # ==============================================================================
-# 4. 分析報告展示
+# 4. 分析結果與診斷報告展示區
 # ==============================================================================
 if st.session_state.get("is_analyzed", False):
     events = st.session_state.swing_events
 
     if not events:
-        st.warning("⚠️ 未能偵測到有效揮棒，請調整邊欄門檻。")
+        st.warning("⚠️ 未能偵測到有效揮棒，請調整左側邊欄門檻。")
     else:
         st.success(f"✅ 完成分析！共偵測到 {len(events)} 次揮棒。")
 
         selected_swing_name = st.selectbox(
-            "🎯 選擇揮棒次數檢視詳細診斷：", [e["次數"] for e in events]
+            "🎯 選擇揮棒次數檢視詳細診斷報告：", [e["次數"] for e in events]
         )
         event = next(e for e in events if e["次數"] == selected_swing_name)
         report = event["report"]
 
         st.markdown("---")
-        # 展示 4 大核心指標
+        # 顯示 4 大核心數據
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("🚀 揮棒速度", f"{event['bat_speed']:.1f} km/h")
-        c2.metric("📏 揮棒軌跡長度", f"{event['swing_length']:.2f} m")
-        c3.metric("📐 攻擊仰角", f"{event['attack_angle']:.1f}°")
-        c4.metric("⚡ 預估擊球初速", f"{event['exit_velocity']:.1f} km/h")
+        c1.metric("🚀 揮棒速度 (Bat Speed)", f"{event['bat_speed']:.1f} km/h")
+        c2.metric(
+            "📏 揮棒軌跡長度 (Swing Length)",
+            f"{event['swing_length']:.2f} m",
+        )
+        c3.metric("📐 攻擊仰角 (Attack Angle)", f"{event['attack_angle']:.1f}°")
+        c4.metric(
+            "⚡ 預估擊球初速 (Exit Velocity)",
+            f"{event['exit_velocity']:.1f} km/h",
+        )
 
         tab1, tab2 = st.tabs(
-            ["📄 揮擊診斷與動力鏈修正報告", "🎬 慢動作姿態回放"]
+            ["📄 揮擊診斷與動作修正報告", "🎬 慢動作姿態回放"]
         )
 
         with tab1:
@@ -644,15 +647,15 @@ if st.session_state.get("is_analyzed", False):
                 f"### 🏆 揮棒綜合評分：`{report['score']} 分` (等級: {report['grade']})"
             )
 
-            st.subheader("📊 4 大核心數據與動力鏈標竿對比")
+            st.subheader("📊 4 大核心參考數據與動力鏈指標對比")
             st.dataframe(report["summary_df"], use_container_width=True)
 
-            st.subheader("💡 動作修正與導引診斷")
+            st.subheader("💡 動作修正方向診斷 (軌跡改善與下半身轉動)")
             for fb in report["feedbacks"]:
                 st.write(f"- {fb}")
 
             if report["drills"]:
-                st.subheader("🎯 針對性動作修正處方 (Recommended Drills)")
+                st.subheader("🎯 建議針對性動作修正處方 (Recommended Drills)")
                 for drill in report["drills"]:
                     st.info(f"👉 **建議訓練：** {drill}")
 
