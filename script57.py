@@ -32,7 +32,7 @@ from reportlab.platypus import (
 # 0. 全域設定與字型/模型註冊 (防亂碼核心機制)
 # ==============================================================================
 st.set_page_config(
-    page_title="⚾ 崇明國中棒球隊 - 智慧化投打運動科學分析系統",
+    page_title="⚾ 崇明國中棒球隊 - 智慧化投打運動科學分析系統 (左右打投優化版)",
     page_icon="⚾",
     layout="wide",
 )
@@ -186,7 +186,7 @@ def generate_advanced_diagnostics(bat_speed, swing_length, attack_angle, exit_ve
             "drills": list(set(drills))}
 
 
-def generate_pdf_report(all_events: list) -> bytes:
+def generate_pdf_report(all_events: list, stance_label: str) -> bytes:
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
 
@@ -201,7 +201,7 @@ def generate_pdf_report(all_events: list) -> bytes:
                                 textColor=colors.HexColor("#1F2937"))
 
     elements = [
-        Paragraph("棒球高階打擊動力鏈 - 全數揮擊次數完整分析總報告", title_style),
+        Paragraph(f"棒球高階打擊動力鏈 - 全數揮擊次數完整分析總報告 ({stance_label})", title_style),
         Paragraph("<b>崇明國中棒球隊</b>", subtitle_style),
         Spacer(1, 4),
         Paragraph(f"總計檢測有效揮擊次數：{len(all_events)} 次 | 系統：Baseball Kinetic Chain Diagnostic",
@@ -239,7 +239,6 @@ def generate_pdf_report(all_events: list) -> bytes:
         rep = ev["report"]
         elements.append(Paragraph(f"▶ {ev['次數']} - 詳細動力鏈數值與診斷", section_style))
 
-        # 插入每一次揮棒的動作截圖
         if ev.get("snapshot_bytes"):
             img_stream = io.BytesIO(ev["snapshot_bytes"])
             elements.append(RLImage(img_stream, width=220, height=124))
@@ -346,7 +345,7 @@ def generate_pitcher_diagnostics(pitch_speed, release_height, h_break, v_break):
             "drills": list(set(drills))}
 
 
-def generate_pitcher_pdf_report(all_pitches: list) -> bytes:
+def generate_pitcher_pdf_report(all_pitches: list, hand_label: str) -> bytes:
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
 
@@ -361,7 +360,7 @@ def generate_pitcher_pdf_report(all_pitches: list) -> bytes:
                                 textColor=colors.HexColor("#1F2937"))
 
     elements = [
-        Paragraph("崇明國中棒球隊 - 全數投球與進壘軌跡完整分析總報告", title_style),
+        Paragraph(f"崇明國中棒球隊 - 全數投球與進壘軌跡完整分析總報告 ({hand_label})", title_style),
         Paragraph("<b>崇明國中棒球隊</b>", subtitle_style),
         Spacer(1, 4),
         Paragraph(f"總計檢測有效投球數：{len(all_pitches)} 球 | 系統：Pitch Tracking System", subtitle_style),
@@ -441,7 +440,7 @@ def generate_pitcher_pdf_report(all_pitches: list) -> bytes:
 # ==============================================================================
 # 主頁面結構與分頁控制
 # ==============================================================================
-st.title("⚾ 崇明國中棒球隊 - 智慧化投打運動科學分析系統")
+st.title("⚾ 崇明國中棒球隊 - 智慧化投打運動科學分析系統 (左右打投優化版)")
 
 tab_batting, tab_pitching = st.tabs(["⚡ 打擊動力鏈分析", "🎯 投手投球與軌跡分析"])
 
@@ -453,10 +452,11 @@ with tab_batting:
 
     with st.sidebar:
         st.header("⚙️ 打擊參數標定")
+        bat_stance = st.selectbox("👤 打者站姿選擇", ["右打 (Right-Handed Stance)", "左打 (Left-Handed Stance)"],
+                                  key="b_stance")
         camera_tilt_deg = st.slider("📐 相機傾斜補償 (度)", -20.0, 20.0, 0.0, 0.5, key="b_tilt")
         meters_per_pixel = st.slider("📏 像素轉公尺比例", 0.0010, 0.0080, 0.0032, 0.0001, key="b_mpx")
         bat_speed_factor = st.slider("🚀 速度放大倍率", 1.00, 2.00, 1.35, 0.05, key="b_fac")
-        # 💡 將預設門檻調降，提升抓球與揮棒的靈敏度
         min_peak_speed = st.slider("⚡ 最低初速門檻 (km/h)", 3.0, 30.0, 6.0, 1.0, key="b_minspd")
         min_total_travel = st.slider("📏 最低手腕位移 (PX)", 5, 50, 10, 5, key="b_trav")
         bat_length_px = 110
@@ -498,6 +498,12 @@ with tab_batting:
         detected_events = []
         clip_dir = tempfile.mkdtemp()
 
+        # 根據左右打動態對映 MediaPipe 關節點 (右打使用 11, 12, 15, 16, 23, 24；左打鏡像對調)
+        is_left_stance = ("左打" in bat_stance)
+        idx_l_sh, idx_r_sh = (12, 11) if is_left_stance else (11, 12)
+        idx_l_hp, idx_r_hp = (24, 23) if is_left_stance else (23, 24)
+        idx_l_wr, idx_r_wr = (16, 15) if is_left_stance else (15, 16)
+
         with vision.PoseLandmarker.create_from_options(options) as landmarker:
             frame_idx = 0
             while cap.isOpened():
@@ -524,9 +530,9 @@ with tab_batting:
                         return (int(lm[idx].x * proc_width), int(lm[idx].y * proc_height)) if idx < len(lm) else None
 
 
-                    l_sh, r_sh = get_c(11), get_c(12)
-                    l_hp, r_hp = get_c(23), get_c(24)
-                    l_wr, r_wr = get_c(15), get_c(16)
+                    l_sh, r_sh = get_c(idx_l_sh), get_c(idx_r_sh)
+                    l_hp, r_hp = get_c(idx_l_hp), get_c(idx_r_hp)
+                    l_wr, r_wr = get_c(idx_l_wr), get_c(idx_r_wr)
 
                     if l_sh and r_sh: cv2.line(annotated_frame, l_sh, r_sh, (255, 255, 255), 2)
                     if l_hp and r_hp: cv2.line(annotated_frame, l_hp, r_hp, (255, 0, 255), 3)
@@ -563,7 +569,6 @@ with tab_batting:
                     current_hip_speed = abs(h2[1] - h1[1]) / (
                         (h2[0] - h1[0]) / fps if (h2[0] - h1[0]) > 0 else 1.0 / fps)
 
-                # 💡 更加放寬的觸發門檻，確保流暢揮棒絕對不會被漏抓
                 start_trigger = max(min_peak_speed * 0.3, 3.5)
                 if cooldown_counter > 0: cooldown_counter -= 1
 
@@ -580,7 +585,6 @@ with tab_batting:
                         if current_speed > max_speed_in_swing:
                             max_speed_in_swing = current_speed
                             peak_frame_snapshot = annotated_frame.copy()
-                        # 放寬判定結束條件，允許完整的收棒過程
                         if max_speed_in_swing >= (min_peak_speed * 0.5) and current_speed < max_speed_in_swing * 0.25:
                             swing_state = 2
                     elif swing_state == 2:
@@ -646,13 +650,13 @@ with tab_batting:
     if st.session_state.get("bat_analyzed", False):
         events = st.session_state.bat_events
         if not events:
-            st.warning("⚠️ 未能偵測到有效揮棒，請調整側邊欄門檻。")
+            st.warning("⚠️ 未能偵測到有效揮棒，請調整側邊欄門檻或確認站姿選擇是否正確。")
         else:
-            st.success(f"✅ 完成分析！共偵測到 {len(events)} 次揮棒。")
+            st.success(f"✅ 完成分析！共偵測到 {len(events)} 次揮棒 ({bat_stance})。")
 
             st.download_button(
                 "📥 下載全部揮擊次數之總合 PDF 報告",
-                data=generate_pdf_report(events),
+                data=generate_pdf_report(events, bat_stance),
                 file_name="batting_all_swings_report.pdf",
                 mime="application/pdf",
                 use_container_width=True,
@@ -683,6 +687,11 @@ with tab_batting:
 # ==============================================================================
 with tab_pitching:
     st.subheader("🎯 投手投球初速與進壘軌跡分析")
+
+    with st.sidebar:
+        st.markdown("---")
+        pitch_hand = st.selectbox("⚾ 投球慣用手選擇", ["右投 (Right-Handed Pitcher)", "左投 (Left-Handed Pitcher)"],
+                                  key="p_hand")
 
     uploaded_pitch = st.file_uploader("📁 請上傳捕手後方視角之投球影片 (MP4 / MOV / AVI)",
                                       type=["mp4", "avi", "mov", "m4v"], key="pitch_up")
@@ -720,6 +729,10 @@ with tab_pitching:
         detected_pitches = []
         clip_dir_p = tempfile.mkdtemp()
 
+        # 根據左右投動態對映慣用手手腕節點 (右投為右手 16；左投為左手 15)
+        is_left_pitcher = ("左投" in pitch_hand)
+        target_wrist_idx = 15 if is_left_pitcher else 16
+
         with vision.PoseLandmarker.create_from_options(options) as landmarker:
             frame_idx = 0
             while cap.isOpened():
@@ -735,8 +748,8 @@ with tab_pitching:
                                                      int((frame_idx / fps) * 1000))
 
                 hand_c = None
-                if result.pose_landmarks and len(result.pose_landmarks[0]) > 16:
-                    lm = result.pose_landmarks[0][16]
+                if result.pose_landmarks and len(result.pose_landmarks[0]) > target_wrist_idx:
+                    lm = result.pose_landmarks[0][target_wrist_idx]
                     hand_c = (int(lm.x * proc_width), int(lm.y * proc_height))
                     cv2.circle(annotated, hand_c, 8, (0, 0, 255), -1)
                     history_wrists.append((frame_idx, hand_c[0], hand_c[1]))
@@ -800,13 +813,13 @@ with tab_pitching:
     if st.session_state.get("pitch_analyzed", False):
         pitches = st.session_state.pitch_events
         if not pitches:
-            st.warning("⚠️ 未能偵測到有效投球，請重新上傳或確認影片內容。")
+            st.warning("⚠️ 未能偵測到有效投球，請重新上傳或確認投球慣用手選擇是否正確。")
         else:
-            st.success(f"✅ 完成分析！共偵測到 {len(pitches)} 球。")
+            st.success(f"✅ 完成分析！共偵測到 {len(pitches)} 球 ({pitch_hand})。")
 
             st.download_button(
                 "📥 下載全部投球數之總合 PDF 報告",
-                data=generate_pitcher_pdf_report(pitches),
+                data=generate_pitcher_pdf_report(pitches, pitch_hand),
                 file_name="pitching_all_pitches_report.pdf",
                 mime="application/pdf",
                 use_container_width=True,
@@ -823,7 +836,7 @@ with tab_pitching:
             pc3.metric("📉 垂直位移", f"{p_data['v_break']:.1f} cm")
             pc4.metric("🏆 綜合評分", f"{prep['score']} 分")
 
-            pt_sub1, pt_sub2 = st.tabs(["📄 單球診斷明細", "🎬 投球動作回放"])
+            pt_sub1, pt_sub2 = st.tabs(["📄 單球診斷明細", "🎬 動作回放"])
             with pt_sub1:
                 st.markdown(f"### 🎯 投球評級：`{prep['grade']}`")
                 if p_data.get("snapshot_bytes"): st.image(p_data["snapshot_bytes"], width=400)
