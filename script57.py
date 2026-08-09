@@ -453,9 +453,9 @@ with tab_batting:
     with st.sidebar:
         st.header("⚙️ 打擊與投球參數標定")
         bat_stance = st.selectbox("👤 打者站姿選擇 (請於上傳前選擇)",
-                                  ["右打 (Right-Handed Stance)", "左打 (Left-Handed Stance)"], key="b_stance_top")
+                                  ["右打 (Right-Handed Stance)", "Left-Handed Stance (左打)"], key="b_stance_top")
         pitch_hand = st.selectbox("⚾ 投球慣用手選擇 (請於上傳前選擇)",
-                                  ["右投 (Right-Handed Pitcher)", "左投 (Left-Handed Pitcher)"], key="p_hand_top")
+                                  ["右投 (Right-Handed Pitcher)", "Left-Handed Pitcher (左投)"], key="p_hand_top")
 
         st.markdown("---")
         camera_tilt_deg = st.slider("📐 相機傾斜補償 (度)", -20.0, 20.0, 0.0, 0.5, key="b_tilt")
@@ -503,7 +503,7 @@ with tab_batting:
         clip_dir = tempfile.mkdtemp()
 
         # 根據預先選擇的左右打動態對映 MediaPipe 關節點
-        is_left_stance = ("左打" in bat_stance)
+        is_left_stance = ("左打" in bat_stance) or ("Left-Handed Stance" in bat_stance)
         idx_l_sh, idx_r_sh = (12, 11) if is_left_stance else (11, 12)
         idx_l_hp, idx_r_hp = (24, 23) if is_left_stance else (23, 24)
         idx_l_wr, idx_r_wr = (16, 15) if is_left_stance else (15, 16)
@@ -570,11 +570,12 @@ with tab_batting:
                 current_hip_speed = 0.0
                 if len(history_hip_angles) >= 2:
                     h1, h2 = history_hip_angles[-2], history_hip_angles[-1]
-                    # 修正角度跳變：將前後影格角度差正規化至 [-180, 180] 避免跨越 ±180 度時數值異常暴增
                     angle_diff = h2[1] - h1[1]
                     angle_diff = (angle_diff + 180) % 360 - 180
                     dt_hip = (h2[0] - h1[0]) / fps if (h2[0] - h1[0]) > 0 else 1.0 / fps
-                    current_hip_speed = abs(angle_diff) / dt_hip
+                    raw_hip_speed = abs(angle_diff) / dt_hip
+                    # 僅「左打版」將髖關節轉速除以 10，右打版維持原數值
+                    current_hip_speed = raw_hip_speed / 10.0 if is_left_stance else raw_hip_speed
 
                 start_trigger = max(min_peak_speed * 0.3, 3.5)
                 if cooldown_counter > 0: cooldown_counter -= 1
@@ -732,7 +733,7 @@ with tab_pitching:
         clip_dir_p = tempfile.mkdtemp()
 
         # 根據側邊欄預先選擇的左右投動態對映慣用手關節點 (右投為右手 16；左投為左手 15)
-        is_left_pitcher = ("左投" in pitch_hand)
+        is_left_pitcher = ("左投" in pitch_hand) or ("Left-Handed Pitcher" in pitch_hand)
         target_wrist_idx = 15 if is_left_pitcher else 16
 
         with vision.PoseLandmarker.create_from_options(options) as landmarker:
