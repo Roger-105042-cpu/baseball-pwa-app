@@ -452,7 +452,6 @@ with tab_batting:
 
     with st.sidebar:
         st.header("⚙️ 打擊與投球參數標定")
-        # 移至最上方：在載入影片前先行選擇打者站姿與投手慣用手
         bat_stance = st.selectbox("👤 打者站姿選擇 (請於上傳前選擇)",
                                   ["右打 (Right-Handed Stance)", "左打 (Left-Handed Stance)"], key="b_stance_top")
         pitch_hand = st.selectbox("⚾ 投球慣用手選擇 (請於上傳前選擇)",
@@ -571,8 +570,11 @@ with tab_batting:
                 current_hip_speed = 0.0
                 if len(history_hip_angles) >= 2:
                     h1, h2 = history_hip_angles[-2], history_hip_angles[-1]
-                    current_hip_speed = abs(h2[1] - h1[1]) / (
-                        (h2[0] - h1[0]) / fps if (h2[0] - h1[0]) > 0 else 1.0 / fps)
+                    # 修正角度跳變：將前後影格角度差正規化至 [-180, 180] 避免跨越 ±180 度時數值異常暴增
+                    angle_diff = h2[1] - h1[1]
+                    angle_diff = (angle_diff + 180) % 360 - 180
+                    dt_hip = (h2[0] - h1[0]) / fps if (h2[0] - h1[0]) > 0 else 1.0 / fps
+                    current_hip_speed = abs(angle_diff) / dt_hip
 
                 start_trigger = max(min_peak_speed * 0.3, 3.5)
                 if cooldown_counter > 0: cooldown_counter -= 1
