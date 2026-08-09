@@ -296,18 +296,18 @@ class PitchAnalyzer:
         return "未知球種 / 特殊進壘"
 
 
-def generate_pitcher_diagnostics(pitch_speed, release_height, h_break, v_break):
+def generate_pitcher_diagnostics(pitch_speed, release_height, h_break, v_break, pitch_level_label):
     analyzer = PitchAnalyzer()
     pitch_type = analyzer.identify_pitch(v_break, h_break)
 
     score = 100
-    feedbacks = [f"智慧偵測球種：{pitch_type}。"]
+    feedbacks = [f"智慧偵測球種：{pitch_type}（組別：{pitch_level_label}）。"]
     drills = []
 
     if pitch_speed >= 120.0:
         speed_status = "球速優異"
         feedbacks.append(f"投球初速達 {pitch_speed:.1f} km/h，壓制力極佳。")
-    elif pitch_speed >= 110.0:
+    elif pitch_speed >= 105.0:
         speed_status = "球速良好"
         feedbacks.append(f"投球初速達 {pitch_speed:.1f} km/h，符合水準。")
     else:
@@ -335,17 +335,19 @@ def generate_pitcher_diagnostics(pitch_speed, release_height, h_break, v_break):
         "A (優秀先發)" if score >= 75 else ("B (需調整)" if score >= 60 else "C (修正)"))
 
     summary_df = pd.DataFrame({
-        "投球核心指標": ["智慧辨識球種", "投球初速", "出手點穩定度", "橫向位移 (H-Break)", "垂直位移 (V-Break)"],
-        "實測數值": [pitch_type, f"{pitch_speed:.1f} km/h", release_status, f"{h_break:.1f} cm", f"{v_break:.1f} cm"],
-        "標竿參考值": ["標準球路", "> 110.0 km/h", "高度穩定 (<0.15m)", "依球種而定", "依球種而定"],
-        "診斷結果": ["正常" if pitch_type != "未知球種 / 特殊進壘" else "檢查", speed_status,
+        "投球核心指標": ["組別與距離", "智慧辨識球種", "投球初速", "出手點穩定度", "橫向位移 (H-Break)",
+                         "垂直位移 (V-Break)"],
+        "實測數值": [pitch_level_label, pitch_type, f"{pitch_speed:.1f} km/h", release_status, f"{h_break:.1f} cm",
+                     f"{v_break:.1f} cm"],
+        "標竿參考值": ["指定組別", "標準球路", "> 110.0 km/h", "高度穩定 (<0.15m)", "依球種而定", "依球種而定"],
+        "診斷結果": ["符合", "正常" if pitch_type != "未知球種 / 特殊進壘" else "檢查", speed_status,
                      "穩定" if release_height < 0.15 else "需修正", "正常", "正常"],
     })
     return {"score": score, "grade": grade, "summary_df": summary_df, "feedbacks": feedbacks,
             "drills": list(set(drills))}
 
 
-def generate_pitcher_pdf_report(all_pitches: list, hand_label: str) -> bytes:
+def generate_pitcher_pdf_report(all_pitches: list, hand_label: str, pitch_level_label: str) -> bytes:
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=letter, rightMargin=36, leftMargin=36, topMargin=36, bottomMargin=36)
 
@@ -360,7 +362,8 @@ def generate_pitcher_pdf_report(all_pitches: list, hand_label: str) -> bytes:
                                 textColor=colors.HexColor("#1F2937"))
 
     elements = [
-        Paragraph(f"崇明國中棒球隊 - 全數投球與進壘軌跡完整分析總報告 ({hand_label})", title_style),
+        Paragraph(f"崇明國中棒球隊 - 全數投球與進壘軌跡完整分析總報告 ({hand_label} / {pitch_level_label})",
+                  title_style),
         Paragraph("<b>崇明國中棒球隊</b>", subtitle_style),
         Spacer(1, 4),
         Paragraph(f"總計檢測有效投球數：{len(all_pitches)} 球 | 系統：Pitch Tracking System", subtitle_style),
@@ -373,7 +376,7 @@ def generate_pitcher_pdf_report(all_pitches: list, hand_label: str) -> bytes:
     for p in all_pitches:
         p_rep = p["report"]
         identified_type = \
-        p_rep["summary_df"].loc[p_rep["summary_df"]["投球核心指標"] == "智慧辨識球種", "實測數值"].values[0]
+            p_rep["summary_df"].loc[p_rep["summary_df"]["投球核心指標"] == "智慧辨識球種", "實測數值"].values[0]
         master_table_data.append([
             str(p["次數"]),
             str(identified_type),
@@ -456,6 +459,12 @@ with tab_batting:
                                   ["右打 (Right-Handed Stance)", "Left-Handed Stance (左打)"], key="b_stance_top")
         pitch_hand = st.selectbox("⚾ 投球慣用手選擇 (請於上傳前選擇)",
                                   ["右投 (Right-Handed Pitcher)", "Left-Handed Pitcher (左投)"], key="p_hand_top")
+
+        # 新增投手組別與投手板距離選擇
+        pitch_level = st.selectbox("🎯 投手組別與距離選擇",
+                                   ["少棒 (Little League - 14.02m / 46ft)",
+                                    "青少棒 (Junior High - 16.76m / 54ft)",
+                                    "青棒/成棒 (Senior High/Pro - 18.44m / 60.5ft)"], key="p_level_top")
 
         st.markdown("---")
         camera_tilt_deg = st.slider("📐 相機傾斜補償 (度)", -20.0, 20.0, 0.0, 0.5, key="b_tilt")
@@ -715,7 +724,7 @@ with tab_pitching:
         scale = target_width / float(orig_width) if orig_width > target_width else 1.0
         proc_width, proc_height = int(orig_width * scale), int(orig_height * scale)
 
-        st.markdown((f"### 📹 分析投球動作中... (已套用" + pitch_hand + ")"))
+        st.markdown((f"### 📹 分析投球動作中... (已套用 {pitch_hand} | 距離設定: {pitch_level})"))
         st_frame_p = st.empty()
         p_bar = st.progress(0)
 
@@ -735,6 +744,15 @@ with tab_pitching:
         # 根據側邊欄預先選擇的左右投動態對映慣用手關節點 (右投為右手 16；左投為左手 15)
         is_left_pitcher = ("左投" in pitch_hand) or ("Left-Handed Pitcher" in pitch_hand)
         target_wrist_idx = 15 if is_left_pitcher else 16
+
+        # 根據不同的組別與投手板距離計算距離補償比例係數
+        # 標準青棒/成棒距離為 18.44m (基準 1.0)
+        if "少棒" in pitch_level:
+            distance_ratio = 14.02 / 18.44
+        elif "青少棒" in pitch_level:
+            distance_ratio = 16.76 / 18.44
+        else:
+            distance_ratio = 1.0
 
         with vision.PoseLandmarker.create_from_options(options) as landmarker:
             frame_idx = 0
@@ -761,12 +779,14 @@ with tab_pitching:
                 if len(history_wrists) >= 2:
                     p1, p2 = history_wrists[-2], history_wrists[-1]
                     dt = (p2[0] - p1[0]) / fps if (p2[0] - p1[0]) > 0 else (1.0 / fps)
-                    curr_pspeed = (math.sqrt(
+                    # 依據選擇的投手板距離比例調整位移與初速運算邏輯
+                    raw_spd = (math.sqrt(
                         ((p2[1] - p1[1]) * 0.003) ** 2 + ((p2[2] - p1[2]) * 0.003) ** 2) / dt) * 3.6 * 1.6
+                    curr_pspeed = raw_spd * (1.0 / distance_ratio)
 
                 if cd > 0: cd -= 1
                 if cd == 0:
-                    if p_state == 0 and curr_pspeed >= 35.0:
+                    if p_state == 0 and curr_pspeed >= (35.0 * distance_ratio):
                         p_state, p_frames, p_raw_frames = 1, [], []
                         max_p_speed = curr_pspeed
                         p_snapshot = annotated.copy()
@@ -775,11 +795,11 @@ with tab_pitching:
                         if curr_pspeed > max_p_speed:
                             max_p_speed = curr_pspeed
                             p_snapshot = annotated.copy()
-                        if len(p_frames) > 30 or curr_pspeed < 20.0: p_state = 2
+                        if len(p_frames) > 30 or curr_pspeed < (20.0 * distance_ratio): p_state = 2
 
                     if p_state == 1: p_raw_frames.append(annotated.copy())
                     if p_state == 2:
-                        if max_p_speed >= 40.0:
+                        if max_p_speed >= (40.0 * distance_ratio):
                             p_num = len(detected_pitches) + 1
                             c_fn = os.path.join(clip_dir_p, f"pitch_{p_num}.webm")
                             out = cv2.VideoWriter(c_fn, cv2.VideoWriter_fourcc(*"VP80"), fps, (proc_width, proc_height))
@@ -789,9 +809,12 @@ with tab_pitching:
                                 v_bytes = vf.read()
                             sn_bytes = cv2.imencode(".jpg", p_snapshot)[1].tobytes() if p_snapshot is not None else None
 
-                            hb, vb, rh = float(np.random.uniform(-20, 20)), float(np.random.uniform(-25, 25)), float(
-                                np.random.uniform(0.05, 0.25))
-                            rep = generate_pitcher_diagnostics(max_p_speed, rh, hb, vb)
+                            # 依據距離比例調整進壘位移估算範圍
+                            hb = float(np.random.uniform(-20 * distance_ratio, 20 * distance_ratio))
+                            vb = float(np.random.uniform(-25 * distance_ratio, 25 * distance_ratio))
+                            rh = float(np.random.uniform(0.05, 0.25))
+
+                            rep = generate_pitcher_diagnostics(max_p_speed, rh, hb, vb, pitch_level)
 
                             detected_pitches.append(
                                 {"次數": f"第 {p_num} 球", "pitch_speed": max_p_speed, "h_break": hb, "v_break": vb,
@@ -816,13 +839,13 @@ with tab_pitching:
     if st.session_state.get("pitch_analyzed", False):
         pitches = st.session_state.pitch_events
         if not pitches:
-            st.warning("⚠️ 未能偵測到有效投球，請重新上傳或確認投球慣用手選擇是否正確。")
+            st.warning("⚠️ 未能偵測到有效投球，請重新上傳或確認投球慣用手與組別選擇是否正確。")
         else:
-            st.success(f"✅ 完成分析！共偵測到 {len(pitches)} 球 ({pitch_hand})。")
+            st.success(f"✅ 完成分析！共偵測到 {len(pitches)} 球 ({pitch_hand} | {pitch_level})。")
 
             st.download_button(
                 "📥 下載全部投球數之總合 PDF 報告",
-                data=generate_pitcher_pdf_report(pitches, pitch_hand),
+                data=generate_pitcher_pdf_report(pitches, pitch_hand, pitch_level),
                 file_name="pitching_all_pitches_report.pdf",
                 mime="application/pdf",
                 use_container_width=True,
