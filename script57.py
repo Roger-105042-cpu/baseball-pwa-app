@@ -32,7 +32,7 @@ from reportlab.platypus import (
 # 0. 全域設定與字型/模型註冊 (防亂碼核心機制)
 # ==============================================================================
 st.set_page_config(
-    page_title="⚾ 崇明國中棒球隊 - 智慧化投打運動科學分析系統 (左右打投優化版)",
+    page_title="⚾ 崇明國中棒球隊 - 智慧化投打運動科學分析系統 (預先選擇左右打投版)",
     page_icon="⚾",
     layout="wide",
 )
@@ -440,7 +440,7 @@ def generate_pitcher_pdf_report(all_pitches: list, hand_label: str) -> bytes:
 # ==============================================================================
 # 主頁面結構與分頁控制
 # ==============================================================================
-st.title("⚾ 崇明國中棒球隊 - 智慧化投打運動科學分析系統 (左右打投優化版)")
+st.title("⚾ 崇明國中棒球隊 - 智慧化投打運動科學分析系統 (預先選擇左右打投版)")
 
 tab_batting, tab_pitching = st.tabs(["⚡ 打擊動力鏈分析", "🎯 投手投球與軌跡分析"])
 
@@ -451,9 +451,14 @@ with tab_batting:
     st.subheader("📊 打擊動作與 4 大核心指標診斷")
 
     with st.sidebar:
-        st.header("⚙️ 打擊參數標定")
-        bat_stance = st.selectbox("👤 打者站姿選擇", ["右打 (Right-Handed Stance)", "左打 (Left-Handed Stance)"],
-                                  key="b_stance")
+        st.header("⚙️ 打擊與投球參數標定")
+        # 移至最上方：在載入影片前先行選擇打者站姿與投手慣用手
+        bat_stance = st.selectbox("👤 打者站姿選擇 (請於上傳前選擇)",
+                                  ["右打 (Right-Handed Stance)", "左打 (Left-Handed Stance)"], key="b_stance_top")
+        pitch_hand = st.selectbox("⚾ 投球慣用手選擇 (請於上傳前選擇)",
+                                  ["右投 (Right-Handed Pitcher)", "左投 (Left-Handed Pitcher)"], key="p_hand_top")
+
+        st.markdown("---")
         camera_tilt_deg = st.slider("📐 相機傾斜補償 (度)", -20.0, 20.0, 0.0, 0.5, key="b_tilt")
         meters_per_pixel = st.slider("📏 像素轉公尺比例", 0.0010, 0.0080, 0.0032, 0.0001, key="b_mpx")
         bat_speed_factor = st.slider("🚀 速度放大倍率", 1.00, 2.00, 1.35, 0.05, key="b_fac")
@@ -481,7 +486,7 @@ with tab_batting:
         scale = target_width / float(orig_width) if orig_width > target_width else 1.0
         proc_width, proc_height = int(orig_width * scale), int(orig_height * scale)
 
-        st.markdown("### 📹 分析打擊動作中...")
+        st.markdown(("### 📹 分析打擊動作中... (已套用" + bat_stance + ")"))
         st_frame = st.empty()
         progress_bar = st.progress(0)
 
@@ -498,7 +503,7 @@ with tab_batting:
         detected_events = []
         clip_dir = tempfile.mkdtemp()
 
-        # 根據左右打動態對映 MediaPipe 關節點 (右打使用 11, 12, 15, 16, 23, 24；左打鏡像對調)
+        # 根據預先選擇的左右打動態對映 MediaPipe 關節點
         is_left_stance = ("左打" in bat_stance)
         idx_l_sh, idx_r_sh = (12, 11) if is_left_stance else (11, 12)
         idx_l_hp, idx_r_hp = (24, 23) if is_left_stance else (23, 24)
@@ -688,11 +693,6 @@ with tab_batting:
 with tab_pitching:
     st.subheader("🎯 投手投球初速與進壘軌跡分析")
 
-    with st.sidebar:
-        st.markdown("---")
-        pitch_hand = st.selectbox("⚾ 投球慣用手選擇", ["右投 (Right-Handed Pitcher)", "左投 (Left-Handed Pitcher)"],
-                                  key="p_hand")
-
     uploaded_pitch = st.file_uploader("📁 請上傳捕手後方視角之投球影片 (MP4 / MOV / AVI)",
                                       type=["mp4", "avi", "mov", "m4v"], key="pitch_up")
 
@@ -712,7 +712,7 @@ with tab_pitching:
         scale = target_width / float(orig_width) if orig_width > target_width else 1.0
         proc_width, proc_height = int(orig_width * scale), int(orig_height * scale)
 
-        st.markdown("### 📹 分析投球動作中...")
+        st.markdown((f"### 📹 分析投球動作中... (已套用" + pitch_hand + ")"))
         st_frame_p = st.empty()
         p_bar = st.progress(0)
 
@@ -729,7 +729,7 @@ with tab_pitching:
         detected_pitches = []
         clip_dir_p = tempfile.mkdtemp()
 
-        # 根據左右投動態對映慣用手手腕節點 (右投為右手 16；左投為左手 15)
+        # 根據側邊欄預先選擇的左右投動態對映慣用手關節點 (右投為右手 16；左投為左手 15)
         is_left_pitcher = ("左投" in pitch_hand)
         target_wrist_idx = 15 if is_left_pitcher else 16
 
