@@ -185,12 +185,17 @@ def generate_advanced_diagnostics(bat_speed, swing_length, attack_angle, exit_ve
         score -= 15
         drills.append("【改善軌跡】水平平飛擊球修正 (Level Swing Progression)")
 
-    if exit_velocity >= 25.0:
-        exit_status = "力量扎實"
-        feedbacks.append(f"進階物理模型預估擊球初速達 {exit_velocity:.1f} km/h。")
+    # 依據使用者指定的擊球初速新標準 (一般平均: 96.5 ~ 112.6 km/h，優異/強打者: 112.6 ~ 128.7 km/h)
+    if exit_velocity >= 112.6:
+        exit_status = "強打者水準 (Elite)"
+        feedbacks.append(f"物理模型預估擊球初速達 {exit_velocity:.1f} km/h，達到優異/強打者水準 (70-80 mph)。")
+    elif exit_velocity >= 96.5:
+        exit_status = "一般平均水準 (Average)"
+        feedbacks.append(f"物理模型預估擊球初速達 {exit_velocity:.1f} km/h，落在一般平均水準範圍 (60-70 mph)。")
     else:
-        exit_status = "轉化待提升"
-        feedbacks.append(f"預估擊球初速為 {exit_velocity:.1f} km/h。")
+        exit_status = "低於平均水準"
+        feedbacks.append(
+            f"預估擊球初速為 {exit_velocity:.1f} km/h，低於 60 mph (96.5 km/h)，建議強化擊球核心效率與爆發力。")
         score -= 10
 
     if hip_rot_speed >= 280.0:
@@ -210,7 +215,8 @@ def generate_advanced_diagnostics(bat_speed, swing_length, attack_angle, exit_ve
         "核心指標": ["揮棒速度", "揮棒軌跡長度", "攻擊仰角", "物理模型擊球初速", "髖關節轉速", "軌跡平順度 (R²)"],
         "實測數值": [f"{bat_speed:.1f} km/h", f"{swing_length:.2f} m", f"{attack_angle:.1f}°",
                      f"{exit_velocity:.1f} km/h", f"{hip_rot_speed:.0f} deg/s", f"{r_squared:.2f}"],
-        "標竿參考值": ["> 28.0 km/h", "0.65 - 0.95 m", "6.0° - 18.0°", "> 25.0 km/h", "> 280 deg/s", "> 0.88"],
+        "標竿參考值": ["> 28.0 km/h", "0.65 - 0.95 m", "6.0° - 18.0°", "優異 > 112.6 km/h (70+ mph)", "> 280 deg/s",
+                       "> 0.88"],
         "診斷結果": [bat_speed_status, length_status, attack_status, exit_status, hip_status,
                      "穩定" if r_squared >= 0.88 else "抖動"],
     })
@@ -664,19 +670,15 @@ with tab_batting:
                             aa, sl, r2 = calculate_attack_angle_and_length(fit_pts, meters_per_pixel, camera_tilt_deg)
                             bs = max_speed_in_swing
 
-                            # 安全防護讀取參數，避免 NameError
                             safe_incoming_speed = globals().get('incoming_speed_kmh', 0.0)
                             safe_cor = globals().get('cor_value', 0.35)
                             safe_mass_ratio = globals().get('effective_mass_ratio', 0.65)
 
-                            # 計算加速度變化率 (Jerk / Acceleration Rate)
                             speeds_arr = [item["speed"] for item in swing_frames_data]
                             accel_rate = np.gradient(speeds_arr).max() if len(speeds_arr) > 2 else 1.0
 
-                            # 估算擊球點位置比例
                             hit_pos_ratio = 0.68
 
-                            # 呼叫進階物理擊球初速模型
                             ev = calculate_advanced_exit_velocity(
                                 bs,
                                 accel_rate,
