@@ -1,5 +1,5 @@
 streamlit
-mediapipe
+reportlab
 opencv-python-headless==4.8.1.78
 numpy
 pillow
