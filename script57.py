@@ -100,25 +100,21 @@ def calculate_advanced_exit_velocity(bat_speed_kmh, accel_rate, hit_pos_ratio, i
     3. 加速度/爆發力斜率加權 (Accel Rate 反映肌肉爆發力釋放陡峭程度)
     """
     v_bat = bat_speed_kmh / 3.6  # 轉為 m/s
-    v_ball = incoming_speed_kmh / 3.6  # 轉為 m/s (來球方向相反，物理上視為正向相對速度)
+    v_ball = incoming_speed_kmh / 3.6  # 轉為 m/s
 
-    # 物理常數：標準硬式棒球質量 m_ball = 0.145 kg，球棒總質量約 0.85 kg
     m_ball = 0.145
     bat_mass = 0.85
     m_eff = bat_mass * mass_ratio  # 有效質量
 
     # 1. 基礎碰撞物理公式 (Elastic-Plastic Impact with COR)
-    # 碰撞後初速公式 (m/s)：v_exit = [m_eff * v_bat + m_ball * v_ball + m_ball * cor * (v_ball + v_bat)] / (m_eff + m_ball)
     collision_v_exit_ms = (m_eff * v_bat + m_ball * v_ball + m_ball * cor * (v_ball + v_bat)) / (m_eff + m_ball)
 
-    # 2. 甜蜜點位置加權 (Sweet Spot Weighting: 最佳擊球點落在 0.65 ~ 0.75 處)
-    # 距離手柄太近或棒頭末端效率遞減
+    # 2. 甜蜜點位置加權 (Sweet Spot Weighting)
     sweet_spot_optimal = 0.70
     deviation = abs(hit_pos_ratio - sweet_spot_optimal)
     sweet_spot_multiplier = max(0.85, 1.25 - (deviation * 0.8))
 
     # 3. 加速度 / 爆發力斜率加權 (Acceleration Rate Modifier)
-    # 加速度變化越陡峭，代表爆發力瞬間釋放越完全
     accel_multiplier = 1.0 + min(0.15, max(-0.1, accel_rate * 0.05))
 
     # 綜合計算最終初速 (m/s 轉 km/h)
@@ -503,7 +499,7 @@ with tab_batting:
 
         st.markdown("---")
         st.markdown("### ⚛️ 擊球物理動態參數設定")
-        incoming_ball_speed = st.slider("⚾ 來球速度 (km/h, 靜止Tee為0)", 0.0, 140.0, 0.0, 5.0, key="b_inc_ball")
+        incoming_speed_kmh = st.slider("⚾ 來球速度 (km/h, 靜止Tee為0)", 0.0, 140.0, 0.0, 5.0, key="b_inc_ball")
         cor_value = st.slider("碰撞恢復係數 (COR)", 0.1, 0.6, 0.35, 0.05, key="b_cor")
         effective_mass_ratio = st.slider("球棒有效質量比", 0.5, 0.8, 0.65, 0.05, key="b_mass_ratio")
 
@@ -668,16 +664,27 @@ with tab_batting:
                             aa, sl, r2 = calculate_attack_angle_and_length(fit_pts, meters_per_pixel, camera_tilt_deg)
                             bs = max_speed_in_swing
 
-                            # 計算加速度變化率 (Jerk / Acceleration Rate) 作為爆發力修正依據
+                            # 安全防護讀取參數，避免 NameError
+                            safe_incoming_speed = globals().get('incoming_speed_kmh', 0.0)
+                            safe_cor = globals().get('cor_value', 0.35)
+                            safe_mass_ratio = globals().get('effective_mass_ratio', 0.65)
+
+                            # 計算加速度變化率 (Jerk / Acceleration Rate)
                             speeds_arr = [item["speed"] for item in swing_frames_data]
                             accel_rate = np.gradient(speeds_arr).max() if len(speeds_arr) > 2 else 1.0
 
-                            # 估算擊球點位置比例 (假設多數有效擊打落在 0.68 處)
+                            # 估算擊球點位置比例
                             hit_pos_ratio = 0.68
 
                             # 呼叫進階物理擊球初速模型
-                            ev = calculate_advanced_exit_velocity(bs, accel_rate, hit_pos_ratio, incoming_speed_kmh,
-                                                                  cor_value, effective_mass_ratio)
+                            ev = calculate_advanced_exit_velocity(
+                                bs,
+                                accel_rate,
+                                hit_pos_ratio,
+                                safe_incoming_speed,
+                                safe_cor,
+                                safe_mass_ratio
+                            )
 
                             pk_hp = max([item["hip_speed"] for item in swing_frames_data] + [0.0])
                             rep = generate_advanced_diagnostics(bs, sl, aa, ev, pk_hp, r2)
