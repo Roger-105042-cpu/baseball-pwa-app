@@ -7,3 +7,9 @@ pandas
 reportlab
 streamlit
 reportlab
+opencv-python-headless
+streamlit
+mediapipe
+numpy
+pandas
+reportlab
