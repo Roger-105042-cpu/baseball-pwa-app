@@ -32,7 +32,7 @@ from reportlab.platypus import (
 # 0. 全域設定與字型/模型註冊 (防亂碼核心機制)
 # ==============================================================================
 st.set_page_config(
-    page_title="⚾ 崇明國中棒球隊 - 智慧化投打運動科學分析系統 (預先選擇左右打投版)",
+    page_title="⚾ 崇明國中棒球隊 - 智慧化投打運動科學分析系統 (進階物理擊球初速版)",
     page_icon="⚾",
     layout="wide",
 )
@@ -90,8 +90,44 @@ else:
 
 
 # ==============================================================================
-# 共用邏輯與運算函式
+# 共用邏輯與運算函式 (含進階物理初速計算)
 # ==============================================================================
+def calculate_advanced_exit_velocity(bat_speed_kmh, accel_rate, hit_pos_ratio, incoming_speed_kmh, cor, mass_ratio):
+    """
+    結合三大進階方法的擊球初速物理模型：
+    1. 碰撞物理學 (動量守恆與 COR 恢復係數)
+    2. 甜蜜點位置加權 (Hit Position Ratio 接近 0.65-0.75 效率最高)
+    3. 加速度/爆發力斜率加權 (Accel Rate 反映肌肉爆發力釋放陡峭程度)
+    """
+    v_bat = bat_speed_kmh / 3.6  # 轉為 m/s
+    v_ball = incoming_speed_kmh / 3.6  # 轉為 m/s (來球方向相反，物理上視為正向相對速度)
+
+    # 物理常數：標準硬式棒球質量 m_ball = 0.145 kg，球棒總質量約 0.85 kg
+    m_ball = 0.145
+    bat_mass = 0.85
+    m_eff = bat_mass * mass_ratio  # 有效質量
+
+    # 1. 基礎碰撞物理公式 (Elastic-Plastic Impact with COR)
+    # 碰撞後初速公式 (m/s)：v_exit = [m_eff * v_bat + m_ball * v_ball + m_ball * cor * (v_ball + v_bat)] / (m_eff + m_ball)
+    collision_v_exit_ms = (m_eff * v_bat + m_ball * v_ball + m_ball * cor * (v_ball + v_bat)) / (m_eff + m_ball)
+
+    # 2. 甜蜜點位置加權 (Sweet Spot Weighting: 最佳擊球點落在 0.65 ~ 0.75 處)
+    # 距離手柄太近或棒頭末端效率遞減
+    sweet_spot_optimal = 0.70
+    deviation = abs(hit_pos_ratio - sweet_spot_optimal)
+    sweet_spot_multiplier = max(0.85, 1.25 - (deviation * 0.8))
+
+    # 3. 加速度 / 爆發力斜率加權 (Acceleration Rate Modifier)
+    # 加速度變化越陡峭，代表爆發力瞬間釋放越完全
+    accel_multiplier = 1.0 + min(0.15, max(-0.1, accel_rate * 0.05))
+
+    # 綜合計算最終初速 (m/s 轉 km/h)
+    final_ev_ms = collision_v_exit_ms * sweet_spot_multiplier * accel_multiplier
+    final_ev_kmh = final_ev_ms * 3.6
+
+    return round(max(final_ev_kmh, bat_speed_kmh * 1.05), 1)
+
+
 def calculate_attack_angle_and_length(bat_trajectory, m_per_px, camera_tilt=0.0):
     if len(bat_trajectory) < 2:
         return 0.0, 0.0, 0.0
@@ -155,7 +191,7 @@ def generate_advanced_diagnostics(bat_speed, swing_length, attack_angle, exit_ve
 
     if exit_velocity >= 25.0:
         exit_status = "力量扎實"
-        feedbacks.append(f"預估擊球初速達 {exit_velocity:.1f} km/h。")
+        feedbacks.append(f"進階物理模型預估擊球初速達 {exit_velocity:.1f} km/h。")
     else:
         exit_status = "轉化待提升"
         feedbacks.append(f"預估擊球初速為 {exit_velocity:.1f} km/h。")
@@ -175,7 +211,7 @@ def generate_advanced_diagnostics(bat_speed, swing_length, attack_angle, exit_ve
         "A (良好)" if score >= 75 else ("B (尚可)" if score >= 60 else "C (需調整)"))
 
     summary_df = pd.DataFrame({
-        "核心指標": ["揮棒速度", "揮棒軌跡長度", "攻擊仰角", "擊球初速", "髖關節轉速", "軌跡平順度 (R²)"],
+        "核心指標": ["揮棒速度", "揮棒軌跡長度", "攻擊仰角", "物理模型擊球初速", "髖關節轉速", "軌跡平順度 (R²)"],
         "實測數值": [f"{bat_speed:.1f} km/h", f"{swing_length:.2f} m", f"{attack_angle:.1f}°",
                      f"{exit_velocity:.1f} km/h", f"{hip_rot_speed:.0f} deg/s", f"{r_squared:.2f}"],
         "標竿參考值": ["> 28.0 km/h", "0.65 - 0.95 m", "6.0° - 18.0°", "> 25.0 km/h", "> 280 deg/s", "> 0.88"],
@@ -204,14 +240,14 @@ def generate_pdf_report(all_events: list, stance_label: str) -> bytes:
         Paragraph(f"棒球高階打擊動力鏈 - 全數揮擊次數完整分析總報告 ({stance_label})", title_style),
         Paragraph("<b>崇明國中棒球隊</b>", subtitle_style),
         Spacer(1, 4),
-        Paragraph(f"總計檢測有效揮擊次數：{len(all_events)} 次 | 系統：Baseball Kinetic Chain Diagnostic",
+        Paragraph(f"總計檢測有效揮擊次數：{len(all_events)} 次 | 系統：Advanced Physics Kinetic Chain Diagnostic",
                   subtitle_style),
         Spacer(1, 8),
         HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#1E3A8A"), spaceAfter=8),
     ]
 
     elements.append(Paragraph("所有偵測揮擊次數之核心數據總表", section_style))
-    master_table_data = [["次數", "揮棒速度", "軌跡長度", "攻擊仰角", "擊球初速", "綜合評分", "等級"]]
+    master_table_data = [["次數", "揮棒速度", "軌跡長度", "攻擊仰角", "物理初速", "綜合評分", "等級"]]
     for ev in all_events:
         master_table_data.append([
             str(ev["次數"]),
@@ -443,7 +479,7 @@ def generate_pitcher_pdf_report(all_pitches: list, hand_label: str, pitch_level_
 # ==============================================================================
 # 主頁面結構與分頁控制
 # ==============================================================================
-st.title("⚾ 崇明國中棒球隊 - 智慧化投打運動科學分析系統 (預先選擇左右打投版)")
+st.title("⚾ 崇明國中棒球隊 - 智慧化投打運動科學分析系統 (進階物理擊球初速版)")
 
 tab_batting, tab_pitching = st.tabs(["⚡ 打擊動力鏈分析", "🎯 投手投球與軌跡分析"])
 
@@ -451,20 +487,25 @@ tab_batting, tab_pitching = st.tabs(["⚡ 打擊動力鏈分析", "🎯 投手�
 # 分頁一：打擊分析系統
 # ==============================================================================
 with tab_batting:
-    st.subheader("📊 打擊動作與 4 大核心指標診斷")
+    st.subheader("📊 打擊動作與進階物理初速診斷")
 
     with st.sidebar:
         st.header("⚙️ 打擊與投球參數標定")
-        bat_stance = st.selectbox("👤 打者站姿選擇 (請於上傳前選擇)",
+        bat_stance = st.selectbox("👤 打者站姿選擇",
                                   ["右打 (Right-Handed Stance)", "Left-Handed Stance (左打)"], key="b_stance_top")
-        pitch_hand = st.selectbox("⚾ 投球慣用手選擇 (請於上傳前選擇)",
+        pitch_hand = st.selectbox("⚾ 投球慣用手選擇",
                                   ["右投 (Right-Handed Pitcher)", "Left-Handed Pitcher (左投)"], key="p_hand_top")
 
-        # 新增投手組別與投手板距離選擇
         pitch_level = st.selectbox("🎯 投手組別與距離選擇",
                                    ["少棒 (Little League - 14.02m / 46ft)",
                                     "青少棒 (Junior High - 16.76m / 54ft)",
                                     "青棒/成棒 (Senior High/Pro - 18.44m / 60.5ft)"], key="p_level_top")
+
+        st.markdown("---")
+        st.markdown("### ⚛️ 擊球物理動態參數設定")
+        incoming_ball_speed = st.slider("⚾ 來球速度 (km/h, 靜止Tee為0)", 0.0, 140.0, 0.0, 5.0, key="b_inc_ball")
+        cor_value = st.slider("碰撞恢復係數 (COR)", 0.1, 0.6, 0.35, 0.05, key="b_cor")
+        effective_mass_ratio = st.slider("球棒有效質量比", 0.5, 0.8, 0.65, 0.05, key="b_mass_ratio")
 
         st.markdown("---")
         camera_tilt_deg = st.slider("📐 相機傾斜補償 (度)", -20.0, 20.0, 0.0, 0.5, key="b_tilt")
@@ -494,7 +535,7 @@ with tab_batting:
         scale = target_width / float(orig_width) if orig_width > target_width else 1.0
         proc_width, proc_height = int(orig_width * scale), int(orig_height * scale)
 
-        st.markdown(("### 📹 分析打擊動作中... (已套用" + bat_stance + ")"))
+        st.markdown(("### 📹 分析打擊動作與物理動力鏈中..."))
         st_frame = st.empty()
         progress_bar = st.progress(0)
 
@@ -511,7 +552,6 @@ with tab_batting:
         detected_events = []
         clip_dir = tempfile.mkdtemp()
 
-        # 根據預先選擇的左右打動態對映 MediaPipe 關節點
         is_left_stance = ("左打" in bat_stance) or ("Left-Handed Stance" in bat_stance)
         idx_l_sh, idx_r_sh = (12, 11) if is_left_stance else (11, 12)
         idx_l_hp, idx_r_hp = (24, 23) if is_left_stance else (23, 24)
@@ -583,7 +623,6 @@ with tab_batting:
                     angle_diff = (angle_diff + 180) % 360 - 180
                     dt_hip = (h2[0] - h1[0]) / fps if (h2[0] - h1[0]) > 0 else 1.0 / fps
                     raw_hip_speed = abs(angle_diff) / dt_hip
-                    # 僅「左打版」將髖關節轉速除以 10，右打版維持原數值
                     current_hip_speed = raw_hip_speed / 10.0 if is_left_stance else raw_hip_speed
 
                 start_trigger = max(min_peak_speed * 0.3, 3.5)
@@ -627,7 +666,19 @@ with tab_batting:
                                 swing_frames_data) >= 5 and tot_travel >= min_total_travel:
                             fit_pts = [item["bat_head"] for item in swing_frames_data if item["bat_head"] is not None]
                             aa, sl, r2 = calculate_attack_angle_and_length(fit_pts, meters_per_pixel, camera_tilt_deg)
-                            bs, ev = max_speed_in_swing, max_speed_in_swing * 1.15
+                            bs = max_speed_in_swing
+
+                            # 計算加速度變化率 (Jerk / Acceleration Rate) 作為爆發力修正依據
+                            speeds_arr = [item["speed"] for item in swing_frames_data]
+                            accel_rate = np.gradient(speeds_arr).max() if len(speeds_arr) > 2 else 1.0
+
+                            # 估算擊球點位置比例 (假設多數有效擊打落在 0.68 處)
+                            hit_pos_ratio = 0.68
+
+                            # 呼叫進階物理擊球初速模型
+                            ev = calculate_advanced_exit_velocity(bs, accel_rate, hit_pos_ratio, incoming_speed_kmh,
+                                                                  cor_value, effective_mass_ratio)
+
                             pk_hp = max([item["hip_speed"] for item in swing_frames_data] + [0.0])
                             rep = generate_advanced_diagnostics(bs, sl, aa, ev, pk_hp, r2)
                             s_num = len(detected_events) + 1
@@ -688,7 +739,7 @@ with tab_batting:
             c1.metric("🚀 揮棒速度", f"{ev_data['bat_speed']:.1f} km/h")
             c2.metric("📏 軌跡長度", f"{ev_data['swing_length']:.2f} m")
             c3.metric("📐 攻擊仰角", f"{ev_data['attack_angle']:.1f}°")
-            c4.metric("⚡ 擊球初速", f"{ev_data['exit_velocity']:.1f} km/h")
+            c4.metric("⚡ 物理擊球初速", f"{ev_data['exit_velocity']:.1f} km/h")
 
             t_sub1, t_sub2 = st.tabs(["📄 單次診斷明細", "🎬 動作回放"])
             with t_sub1:
@@ -741,12 +792,9 @@ with tab_pitching:
         detected_pitches = []
         clip_dir_p = tempfile.mkdtemp()
 
-        # 根據側邊欄預先選擇的左右投動態對映慣用手關節點 (右投為右手 16；左投為左手 15)
         is_left_pitcher = ("左投" in pitch_hand) or ("Left-Handed Pitcher" in pitch_hand)
         target_wrist_idx = 15 if is_left_pitcher else 16
 
-        # 根據不同的組別與投手板距離計算距離補償比例係數
-        # 標準青棒/成棒距離為 18.44m (基準 1.0)
         if "少棒" in pitch_level:
             distance_ratio = 14.02 / 18.44
         elif "青少棒" in pitch_level:
@@ -779,7 +827,6 @@ with tab_pitching:
                 if len(history_wrists) >= 2:
                     p1, p2 = history_wrists[-2], history_wrists[-1]
                     dt = (p2[0] - p1[0]) / fps if (p2[0] - p1[0]) > 0 else (1.0 / fps)
-                    # 依據選擇的投手板距離比例調整位移與初速運算邏輯
                     raw_spd = (math.sqrt(
                         ((p2[1] - p1[1]) * 0.003) ** 2 + ((p2[2] - p1[2]) * 0.003) ** 2) / dt) * 3.6 * 1.6
                     curr_pspeed = raw_spd * (1.0 / distance_ratio)
@@ -809,7 +856,6 @@ with tab_pitching:
                                 v_bytes = vf.read()
                             sn_bytes = cv2.imencode(".jpg", p_snapshot)[1].tobytes() if p_snapshot is not None else None
 
-                            # 依據距離比例調整進壘位移估算範圍
                             hb = float(np.random.uniform(-20 * distance_ratio, 20 * distance_ratio))
                             vb = float(np.random.uniform(-25 * distance_ratio, 25 * distance_ratio))
                             rh = float(np.random.uniform(0.05, 0.25))
