@@ -481,6 +481,8 @@ def generate_pitcher_pdf_report(all_pitches: list, hand_label: str, pitch_level_
 # ==============================================================================
 # 主頁面結構與分頁控制
 # ==============================================================================
+# 主頁面結構與分頁控制
+# ==============================================================================
 st.title("⚾ 崇明國中棒球隊 - 智慧化投打運動科學分析系統 (進階物理擊球初速版)")
 
 tab_batting, tab_pitching = st.tabs(["⚡ 打擊動力鏈分析", "🎯 投手投球與軌跡分析"])
@@ -493,28 +495,92 @@ with tab_batting:
 
     with st.sidebar:
         st.header("⚙️ 打擊與投球參數標定")
-        bat_stance = st.selectbox("👤 打者站姿選擇",
-                                  ["右打 (Right-Handed Stance)", "Left-Handed Stance (左打)"], key="b_stance_top")
-        pitch_hand = st.selectbox("⚾ 投球慣用手選擇",
-                                  ["右投 (Right-Handed Pitcher)", "Left-Handed Pitcher (左投)"], key="p_hand_top")
 
-        pitch_level = st.selectbox("🎯 投手組別與距離選擇",
-                                   ["少棒 (Little League - 14.02m / 46ft)",
-                                    "青少棒 (Junior High - 16.76m / 54ft)",
-                                    "青棒/成棒 (Senior High/Pro - 18.44m / 60.5ft)"], key="p_level_top")
+        bat_stance = st.selectbox(
+            "👤 打者站姿選擇",
+            ["右打 (Right-Handed Stance)", "Left-Handed Stance (左打)"],
+            key="b_stance_top",
+            help="選擇打者的揮擊站姿。系統將據此自動倒置與調整 MediaPipe 骨架節點（肩膀、髖部、手腕）的左右側對應，確保動力鏈旋轉角度與手腕追蹤的精確度。"
+        )
+
+        pitch_hand = st.selectbox(
+            "⚾ 投球慣用手選擇",
+            ["右投 (Right-Handed Pitcher)", "Left-Handed Pitcher (左投)"],
+            key="p_hand_top",
+            help="選擇投手的慣用投球手。於投手分析模組中，系統將針對該側的手腕、肘關節與放球點（Release Point）軌跡進行重點追蹤與計算。"
+        )
+
+        pitch_level = st.selectbox(
+            "🎯 投手組別與距離選擇",
+            ["少棒 (Little League - 14.02m / 46ft)",
+             "青少棒 (Junior High - 16.76m / 54ft)",
+             "青棒/成棒 (Senior High/Pro - 18.44m / 60.5ft)"],
+            key="p_level_top",
+            help="選擇場地的標準投球距離（崇明國中青少棒請選 16.76m）。此距離用於將像素空間軌跡轉換為真實物理距離，並據以計算球速與進壘時間。"
+        )
 
         st.markdown("---")
         st.markdown("### ⚛️ 擊球物理動態參數設定")
-        incoming_speed_kmh = st.slider("⚾ 來球速度 (km/h, 靜止Tee為0)", 0.0, 140.0, 0.0, 5.0, key="b_inc_ball")
-        cor_value = st.slider("碰撞恢復係數 (COR)", 0.1, 0.6, 0.35, 0.05, key="b_cor")
-        effective_mass_ratio = st.slider("球棒有效質量比", 0.5, 0.8, 0.65, 0.05, key="b_mass_ratio")
+
+        incoming_speed_kmh = st.slider(
+            "⚾ 來球速度 (km/h, 靜止Tee為0)",
+            0.0, 140.0, 0.0, 5.0,
+            key="b_inc_ball",
+            help="設定對抗來球的投球速度 (km/h)。若為座擊打 (Tee Work) 或定點球請設為 0；若為發球機或真人投球請輸入測槍球速。系統將運用動量守恆與能量傳遞公式計算進階擊球初速 (Exit Velocity)。"
+        )
+
+        cor_value = st.slider(
+            "碰撞恢復係數 (COR)",
+            0.1, 0.6, 0.35, 0.05,
+            key="b_cor",
+            help="球棒與棒球碰撞時的能量恢復係數 (Coefficient of Restitution)。一般木棒約為 0.40~0.45，鋁棒/複合材質棒約為 0.50~0.55，發泡練習球或軟球則較低。COR 值越高，碰撞能量轉移效率越佳。"
+        )
+
+        effective_mass_ratio = st.slider(
+            "球棒有效質量比",
+            0.5, 0.8, 0.65, 0.05,
+            key="b_mass_ratio",
+            help="擊球點位置相對於球棒總質量的有效轉動慣量比例。擊中甜蜜點時約為 0.65~0.70；若擊中握把側或棒頭極端位置，有效質量比會下降，導致能量傳遞衰減。"
+        )
 
         st.markdown("---")
-        camera_tilt_deg = st.slider("📐 相機傾斜補償 (度)", -20.0, 20.0, 0.0, 0.5, key="b_tilt")
-        meters_per_pixel = st.slider("📏 像素轉公尺比例", 0.0010, 0.0080, 0.0032, 0.0001, key="b_mpx")
-        bat_speed_factor = st.slider("🚀 速度放大倍率", 1.00, 2.00, 1.35, 0.05, key="b_fac")
-        min_peak_speed = st.slider("⚡ 最低初速門檻 (km/h)", 3.0, 30.0, 6.0, 1.0, key="b_minspd")
-        min_total_travel = st.slider("📏 最低手腕位移 (PX)", 5, 50, 10, 5, key="b_trav")
+        st.markdown("### 📐 鏡頭與影像空間標定")
+
+        camera_tilt_deg = st.slider(
+            "📐 相機傾斜補償 (度)",
+            -20.0, 20.0, 0.0, 0.5,
+            key="b_tilt",
+            help="補償鏡頭拍攝時的俯仰角度（俯角為負，仰角為正）。若攝影機未完全水平對準打擊者，可透過此度數進行幾何校正，以確保計算出的攻擊仰角 (Attack Angle) 精確。"
+        )
+
+        meters_per_pixel = st.slider(
+            "📏 像素轉公尺比例",
+            0.0010, 0.0080, 0.0032, 0.0001,
+            key="b_mpx",
+            help="空間轉換參數：畫面中每個像素 (Pixel) 所代表的實際物理長度 (m/px)。預設 0.0032 適用於約 4-5 公尺外側拍涵蓋全人身的鏡頭。可用已知尺寸（如 84cm 球棒）進行精確微調。"
+        )
+
+        bat_speed_factor = st.slider(
+            "🚀 速度放大倍率",
+            1.00, 2.00, 1.35, 0.05,
+            key="b_fac",
+            help="三維空間與視覺深度補償倍率。由於單鏡頭 2D 影像無法完全擷取前後深度方向（Z軸）的速度分量，透過此放大倍率可將平面手腕速度還原至真實三維空間揮棒速度。"
+        )
+
+        min_peak_speed = st.slider(
+            "⚡ 最低初速門檻 (km/h)",
+            3.0, 30.0, 6.0, 1.0,
+            key="b_minspd",
+            help="判定一次有效揮棒的最低瞬間揮棒速度觸發門檻 (km/h)。低於此數值的身體微幅擺動或準備動作將被自動忽略，防止誤觸發分析事件。"
+        )
+
+        min_total_travel = st.slider(
+            "📏 最低手腕位移 (PX)",
+            5, 50, 10, 5,
+            key="b_trav",
+            help="判定為一次完整揮棒事件時，手腕在畫面上累積位移的最小像素距離。可過濾打者原地試揮或定點準備時的手腕微幅晃動。"
+        )
+
         bat_length_px = 110
         target_width = 800
 
