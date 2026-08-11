@@ -185,7 +185,6 @@ def generate_advanced_diagnostics(bat_speed, swing_length, attack_angle, exit_ve
         score -= 15
         drills.append("【改善軌跡】水平平飛擊球修正 (Level Swing Progression)")
 
-    # 依據使用者指定的擊球初速新標準 (一般平均: 96.5 ~ 112.6 km/h，優異/強打者: 112.6 ~ 128.7 km/h)
     if exit_velocity >= 112.6:
         exit_status = "強打者水準 (Elite)"
         feedbacks.append(f"物理模型預估擊球初速達 {exit_velocity:.1f} km/h，達到優異/強打者水準 (70-80 mph)。")
@@ -481,8 +480,6 @@ def generate_pitcher_pdf_report(all_pitches: list, hand_label: str, pitch_level_
 # ==============================================================================
 # 主頁面結構與分頁控制
 # ==============================================================================
-# 主頁面結構與分頁控制
-# ==============================================================================
 st.title("⚾ 崇明國中棒球隊 - 智慧化投打運動科學分析系統 (進階物理擊球初速版)")
 
 tab_batting, tab_pitching = st.tabs(["⚡ 打擊動力鏈分析", "🎯 投手投球與軌跡分析"])
@@ -500,7 +497,7 @@ with tab_batting:
             "👤 打者站姿選擇",
             ["右打 (Right-Handed Stance)", "Left-Handed Stance (左打)"],
             key="b_stance_top",
-            help="選擇打者的揮擊站姿。系統將據此自動倒置與調整 MediaPipe 骨架節點（肩膀、髖部、手腕）的左右側對應，確保動力鏈旋轉角度與手腕追蹤的精確度。"
+            help="選擇打者的揮擊站姿。系統將據此自動倒置與調整 MediaPipe 骨架節點（肩膀, 髖部, 手腕）的左右側對應，確保動力鏈旋轉角度與手腕追蹤的精確度。"
         )
 
         pitch_hand = st.selectbox(
@@ -684,14 +681,27 @@ with tab_batting:
                     current_speed = np.mean([item["speed"] for item in swing_frames_data[-2:]] + [
                         inst_speed]) if swing_frames_data else inst_speed
 
+                # ==============================================================
+                # 已修正：左打髖關節轉速防噪、移動平均與極限截斷處理
+                # ==============================================================
                 current_hip_speed = 0.0
-                if len(history_hip_angles) >= 2:
+                if len(history_hip_angles) >= 3:
+                    # 1. 透過最近 3 幀角度進行移動平均，過濾掉關節點前後遮擋造成的噪點
+                    recent_angles = [item[1] for item in history_hip_angles[-3:]]
+                    smoothed_angle = np.mean(recent_angles)
+
                     h1, h2 = history_hip_angles[-2], history_hip_angles[-1]
                     angle_diff = h2[1] - h1[1]
                     angle_diff = (angle_diff + 180) % 360 - 180
                     dt_hip = (h2[0] - h1[0]) / fps if (h2[0] - h1[0]) > 0 else 1.0 / fps
+
                     raw_hip_speed = abs(angle_diff) / dt_hip
-                    current_hip_speed = raw_hip_speed / 10.0 if is_left_stance else raw_hip_speed
+
+                    # 2. 設定物理極值上限（極限角速度截斷，濾除瞬間雜訊）
+                    capped_hip_speed = min(raw_hip_speed, 850.0)
+
+                    # 3. 針對左打進行合理的比例縮放與平滑控制
+                    current_hip_speed = (capped_hip_speed / 3.0) if is_left_stance else capped_hip_speed
 
                 start_trigger = max(min_peak_speed * 0.3, 3.5)
                 if cooldown_counter > 0: cooldown_counter -= 1
