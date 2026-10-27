@@ -1,6 +1,6 @@
-streamlit
+streamlit>=1.28.0
 mediapipe==0.10.9
 opencv-python-headless==4.8.1.78
-numpy>=1.23.5,<2.0.0
-pandas
-reportlab
+numpy==1.26.4
+pandas>=2.0.0
+reportlab>=4.0.0
